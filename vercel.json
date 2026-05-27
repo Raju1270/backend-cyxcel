@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "functions": {
+    "app/api/[...all].ts": {
+      "maxDuration": 300
+    }
+  },
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/api/[...all]" }
+  ]
+}
+

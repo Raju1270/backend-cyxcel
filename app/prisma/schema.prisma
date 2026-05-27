@@ -1,0 +1,307 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Peril {
+  id             String            @id @default(uuid())
+  name           String
+  slug           String            @unique
+  description    String
+  impact         Impact?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  region               Region[]
+  likelihoods    PerilLikelihood[]
+  customRiskCategories CustomRiskCategory[] @relation("CustomPerils")
+  natureOfLosses       NatureOfLoss[]       @relation("NatureOfLossToPeril")
+  riskCategories       RiskCategory[]       @relation("PerilToRiskCategory")
+}
+
+model PerilLikelihood {
+  id        String     @id @default(uuid())
+  perilId   String
+  eu        Likelihood
+  us        Likelihood
+  uk        Likelihood
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  peril     Peril      @relation(fields: [perilId], references: [id], onDelete: Cascade)
+}
+
+model RiskCategory {
+  id                String              @id @default(uuid())
+  slug              String              @unique
+  name              String
+  lossData          Json
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  exposureQuestions ExposureQuestion[]
+  questions         Question[]
+  reports           Report[]
+  services          Service[]
+  articles          ThoughtLeadership[]
+  perils            Peril[]             @relation("PerilToRiskCategory")
+}
+
+model Sector {
+  id        String           @id @default(uuid())
+  name      String
+  role      SectorRole
+  euNS12    Boolean
+  euDORA    Boolean
+  uk        Boolean
+  usCISA    Boolean
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  exposures SectorExposure[]
+}
+
+model SectorExposure {
+  id                              String   @id @default(uuid())
+  sectorId                        String
+  aiExposure                      Exposure
+  corporateResponsibilityExposure Exposure
+  cyberExposure                   Exposure
+  geopoliticalExposure            Exposure
+  legalExposure                   Exposure
+  supplyChainExposure             Exposure
+  technologyExposure              Exposure
+  createdAt                       DateTime @default(now())
+  updatedAt                       DateTime @updatedAt
+  sector                          Sector   @relation(fields: [sectorId], references: [id])
+}
+
+model NatureOfLoss {
+  id              String      @id @default(uuid())
+  name            String
+  slug            String      @unique
+  definition      String
+  primaryOwnerId  String
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  primaryOwner    RiskOwner   @relation("NatureOfLossPrimaryOwner", fields: [primaryOwnerId], references: [id])
+  secondaryOwners RiskOwner[] @relation("NatureOfLossSecondaryOwners")
+  perils          Peril[]     @relation("NatureOfLossToPeril")
+}
+
+model RiskOwner {
+  id                      String         @id @default(uuid())
+  name                    String         @unique
+  createdAt               DateTime       @default(now())
+  updatedAt               DateTime       @updatedAt
+  primaryNatureOfLosses   NatureOfLoss[] @relation("NatureOfLossPrimaryOwner")
+  secondaryNatureOfLosses NatureOfLoss[] @relation("NatureOfLossSecondaryOwners")
+}
+
+model User {
+  id         String       @id @default(uuid())
+  clerkId    String       @unique
+  email      String       @unique
+  name       String
+  designation       String?
+  settingsId String       @unique
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+  customRiskCategories CustomRiskCategory[]
+  importLogs           ImportLog[]
+  memberships          Membership[]
+  reports              Report[]
+  settings             UserSettings         @relation(fields: [settingsId], references: [id], onDelete: Cascade)
+}
+
+model UserSettings {
+  id             String   @id @default(uuid())
+  sectorId       String?
+  riskCategoryId String?
+  region         Region?
+  riskOwnerId    String?
+  userId         String?  @unique
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  user           User?
+}
+
+model Report {
+  id             String       @id @default(uuid())
+  name           String
+  scopingAnswers Json?
+  answers        Json?
+  riskCategoryId String
+  userId         String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  completedAt    DateTime?
+  riskCategory   RiskCategory @relation(fields: [riskCategoryId], references: [id])
+  user           User         @relation(fields: [userId], references: [id])
+}
+
+model ThoughtLeadership {
+  id             String       @id @default(uuid())
+  title          String
+  riskCategoryId String
+  link           String
+  publishedDate  DateTime
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  deletedAt      DateTime?
+  riskCategory   RiskCategory @relation(fields: [riskCategoryId], references: [id])
+
+  @@index([riskCategoryId, publishedDate])
+  @@index([deletedAt])
+}
+
+model ExposureQuestion {
+  id             String       @id @default(uuid())
+  question       String
+  number         Int
+  riskCategoryId String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  riskCategory   RiskCategory @relation(fields: [riskCategoryId], references: [id])
+}
+
+model Question {
+  id               String       @id @default(uuid())
+  riskCategoryId   String
+  question         String
+  number           Int
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  inactive         Boolean      @default(false)
+  replacedById     String?
+  replacedBy       Question?    @relation("QuestionVersions", fields: [replacedById], references: [id])
+  previousVersions Question[]   @relation("QuestionVersions")
+  riskCategory     RiskCategory @relation(fields: [riskCategoryId], references: [id])
+}
+
+model Service {
+  id             String       @id @default(uuid())
+  title          String
+  providerName   String
+  riskCategoryId String
+  description    String
+  link           String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  deletedAt      DateTime?
+  riskCategory   RiskCategory @relation(fields: [riskCategoryId], references: [id])
+
+  @@index([riskCategoryId])
+  @@index([deletedAt])
+}
+
+model CustomRiskCategory {
+  id        String   @id @default(uuid())
+  userId    String
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id])
+  perils    Peril[]  @relation("CustomPerils")
+}
+
+model ImportLog {
+  id        String       @id @default(uuid())
+  userId    String
+  filename  String
+  rowCount  Int
+  status    ImportStatus
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  user      User         @relation(fields: [userId], references: [id])
+}
+model Organization {
+  id                 String                        @id
+  name               String
+  plan               Plan?                         @default(basic)
+  seat               Int?                          @default(0)
+  createdAt          DateTime                      @default(now())
+  updatedAt          DateTime                      @updatedAt
+  
+  memberships Membership[]
+}
+
+model Membership {
+  id             String       @id @default(uuid())
+  userId         String
+  organizationId String
+  role           OrgRole
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, organizationId])
+}
+
+enum Likelihood {
+  HIGHLY_UNLIKELY @map("1")
+  UNLIKELY        @map("2")
+  POSSIBLE        @map("3")
+  LIKELY          @map("4")
+  HIGHLY_LIKELY   @map("5")
+}
+
+enum Impact {
+  MINOR    @map("1")
+  MODERATE @map("2")
+  MAJOR    @map("3")
+  SEVERE   @map("4")
+  CRITICAL @map("5")
+}
+
+enum SectorRole {
+  producer
+  producerIntermediary
+  intermediary
+  intermediaryEndUser
+  enabler
+  endUser
+}
+
+enum Exposure {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum Region {
+  EU
+  US
+  UK
+}
+
+enum ScopingAnswer {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum ImportStatus {
+  SUCCESS
+  FAILED
+}
+
+enum OrgRole {
+  superAdmin
+  cxo
+  user
+  unassign
+}
+
+enum Plan {
+  basic
+  pro
+  enterprise
+}

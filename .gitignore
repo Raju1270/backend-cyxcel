@@ -1,0 +1,31 @@
+.idea
+.env.loc
+*.pyc
+*/logs/daphne.log
+*/logs/django.log*
+*/logs/celery.log
+
+# Poetry
+.env
+.env.loc.service1
+.env.loc.service2
+.env.loc.core
+.venv
+.cache/pypoetry/
+.history/
+.history/*
+activate.sh
+.vscode/
+.vscode/*
+
+app/node_modules
+app/node_modules/*
+app/dist
+app/dist/*
+
+# Local Docker bind-mount data (Postgres, etc.)
+data/
+.vercel
+.env*.local
+
+.env.example
