@@ -28,6 +28,7 @@ export async function createNestApp(
     ? ['error', 'log']
     : ['error', 'warn', 'log', 'debug', 'verbose'];
 
+  console.log('NEST FACTORY START');
   const app = options.expressApp
     ? await NestFactory.create<NestExpressApplication>(
         AppModule,
@@ -37,6 +38,8 @@ export async function createNestApp(
     : await NestFactory.create<NestExpressApplication>(AppModule, {
         logger: loggerLevels,
       });
+
+  console.log('APP INIT START');
 
   app.useGlobalPipes(
     new ValidationPipe({
@@ -109,6 +112,8 @@ export async function createNestApp(
     credentials: true,
   });
 
+  console.log('APP INIT START');
   await app.init();
+  console.log('APP INIT DONE');
   return app;
 }
