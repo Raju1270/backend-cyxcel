@@ -58,14 +58,16 @@ export async function createNestApp(
     prefix: 'api/v',
   });
 
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('DRM API')
-    .setDescription('API documentation')
-    .setVersion('1.0')
-    .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT' })
-    .build();
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup('api/docs', app, document);
+  if (!isProduction) {
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle('DRM API')
+      .setDescription('API documentation')
+      .setVersion('1.0')
+      .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT' })
+      .build();
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup('api/docs', app, document);
+  }
 
   const configService = app.get(ConfigService);
   const corsOrigins = configService.get<string[]>('cors.origins') || [];
