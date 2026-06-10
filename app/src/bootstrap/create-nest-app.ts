@@ -58,7 +58,7 @@ export async function createNestApp(
     prefix: 'api/v',
   });
 
-  if (!isProduction) {
+  
     const swaggerConfig = new DocumentBuilder()
       .setTitle('DRM API')
       .setDescription('API documentation')
@@ -67,7 +67,7 @@ export async function createNestApp(
       .build();
     const document = SwaggerModule.createDocument(app, swaggerConfig);
     SwaggerModule.setup('api/docs', app, document);
-  }
+  
 
   const configService = app.get(ConfigService);
   const corsOrigins = configService.get<string[]>('cors.origins') || [];
