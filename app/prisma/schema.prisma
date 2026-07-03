@@ -1,11 +1,6 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
@@ -14,18 +9,47 @@ datasource db {
 }
 
 model Peril {
-  id             String            @id @default(uuid())
-  name           String
-  slug           String            @unique
-  description    String
-  impact         Impact?
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @updatedAt
+  id                   String                    @id @default(uuid())
+  name                 String
+  slug                 String                    @unique
+  description          String
+  impact               Impact?
+  createdAt            DateTime                  @default(now())
+  updatedAt            DateTime                  @updatedAt
   region               Region[]
-  likelihoods    PerilLikelihood[]
-  customRiskCategories CustomRiskCategory[] @relation("CustomPerils")
-  natureOfLosses       NatureOfLoss[]       @relation("NatureOfLossToPeril")
-  riskCategories       RiskCategory[]       @relation("PerilToRiskCategory")
+  likelihoods          PerilLikelihood[]
+  organizationRatings  OrganizationPerilRating[]
+  customRiskCategories CustomRiskCategory[]      @relation("CustomPerils")
+  natureOfLosses       NatureOfLoss[]            @relation("NatureOfLossToPeril")
+  riskCategories       RiskCategory[]            @relation("PerilToRiskCategory")
+  ratingHistory        OrganizationPerilRatingHistory[]
+  perilHistory         PerilHistory[]
+}
+
+model PerilHistory {
+  id        String @id @default(uuid())
+  perilId   String
+
+  impact   Impact?
+
+  eu Likelihood?
+  us Likelihood?
+  uk Likelihood?
+
+  updatedById String?
+  updatedBy   User?   @relation("PerilLikelihoodHistoryUpdatedBy", fields: [updatedById], references: [id])
+
+  // SNAPSHOT OF LIKELIHOOD TIMESTAMPS AT TIME OF CHANGE.
+  likelihoodCreatedAt DateTime
+  likelihoodUpdatedAt DateTime
+
+  historyCreatedAt DateTime @default(now())
+
+  peril Peril @relation(fields: [perilId], references: [id], onDelete: Cascade)
+
+  @@index([perilId])
+  @@index([historyCreatedAt])
+  @@index([perilId, historyCreatedAt])
 }
 
 model PerilLikelihood {
@@ -105,12 +129,12 @@ model RiskOwner {
 }
 
 model User {
-  id         String       @id @default(uuid())
-  clerkId    String       @unique
-  email      String       @unique
-  name       String
-  designation       String?
-  settingsId String       @unique
+  id                   String               @id @default(uuid())
+  clerkId              String               @unique
+  email                String               @unique
+  name                 String
+  designation          String?
+  settingsId           String               @unique
   createdAt            DateTime             @default(now())
   updatedAt            DateTime             @updatedAt
   customRiskCategories CustomRiskCategory[]
@@ -118,6 +142,9 @@ model User {
   memberships          Membership[]
   reports              Report[]
   settings             UserSettings         @relation(fields: [settingsId], references: [id], onDelete: Cascade)
+  perilRatings        OrganizationPerilRating[]        @relation("OrganizationPerilRatingUpdatedBy")
+  perilRatingHistory  OrganizationPerilRatingHistory[] @relation("OrganizationPerilRatingHistoryUpdatedBy")
+  perilHistory        PerilHistory[]                   @relation("PerilLikelihoodHistoryUpdatedBy")
 }
 
 model UserSettings {
@@ -222,15 +249,18 @@ model ImportLog {
   updatedAt DateTime     @updatedAt
   user      User         @relation(fields: [userId], references: [id])
 }
+
 model Organization {
-  id                 String                        @id
-  name               String
-  plan               Plan?                         @default(basic)
-  seat               Int?                          @default(0)
-  createdAt          DateTime                      @default(now())
-  updatedAt          DateTime                      @updatedAt
-  
-  memberships Membership[]
+  id        String   @id
+  name      String
+  plan      Plan?    @default(basic)
+  seat      Int?     @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  memberships          Membership[]
+  perilRatings         OrganizationPerilRating[]
+  perilRatingHistory   OrganizationPerilRatingHistory[]
 }
 
 model Membership {
@@ -242,7 +272,70 @@ model Membership {
   updatedAt      DateTime     @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@unique([userId, organizationId])
+}
+
+model OrganizationPerilRating {
+  id             String @id @default(uuid())
+  organizationId String
+  perilId        String
+
+  impact       Impact?
+  euLikelihood Likelihood?
+  usLikelihood Likelihood?
+  ukLikelihood Likelihood?
+
+  comments String?
+
+  isActive    Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  updatedById String?
+  updatedBy   User?   @relation("OrganizationPerilRatingUpdatedBy", fields: [updatedById], references: [id])
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  peril        Peril        @relation(fields: [perilId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, perilId])
+  @@index([organizationId])
+  @@index([perilId])
+}
+
+model OrganizationPerilRatingHistory {
+  id String @id @default(uuid())
+
+  organizationId String
+  perilId        String
+
+  impact       Impact?
+  euLikelihood Likelihood?
+  usLikelihood Likelihood?
+  ukLikelihood Likelihood?
+
+  comments String?
+  isActive Boolean
+
+  updatedById String?
+  // TRACKS WHO MADE THE RATING CHANGE.
+  updatedBy User? @relation("OrganizationPerilRatingHistoryUpdatedBy", fields: [updatedById], references: [id])
+
+  // TIMESTAMPS FROM THE CURRENT RECORD.
+  ratingCreatedAt DateTime
+  ratingUpdatedAt DateTime
+
+  // WHEN THIS HISTORY ENTRY WAS CREATED.
+  historyCreatedAt DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  peril        Peril        @relation(fields: [perilId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([perilId])
+  @@index([historyCreatedAt])
+  @@index([organizationId, perilId, historyCreatedAt])
 }
 
 enum Likelihood {

@@ -155,11 +155,6 @@ export class ClerkStrategy extends PassportStrategy(
       const isAdminUser = sessionClaims?.metadata?.admin === true;
 
       if (!isAdminUser) {
-        console.warn('Admin check failed for user:', {
-          userId,
-          metadata: sessionClaims?.metadata,
-          isAdminUser,
-        });
         throw new UnauthorizedException(
           'Access denied. Admin privileges required.',
         );

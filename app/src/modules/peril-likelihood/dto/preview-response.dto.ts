@@ -2,7 +2,7 @@ import { ApiProperty } from '@nestjs/swagger';
 import { Likelihood } from '../utils/likelihood.enum';
 import { WarningsDto } from '../../../common/dto/import-common.dto';
 import { ImportPreviewResponseDto } from '../../../common/dto/import-preview-response.dto';
-
+import { Impact } from '@prisma/client';
 export class PerilLikelihoodRowData {
   @ApiProperty()
   perilId: string;
@@ -12,6 +12,9 @@ export class PerilLikelihoodRowData {
 
   @ApiProperty()
   perilSlug: string;
+
+  @ApiProperty({ enum: Impact, required: false })
+  impact?: Impact;
 
   @ApiProperty({ enum: Likelihood })
   eu: Likelihood;

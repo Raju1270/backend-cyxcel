@@ -88,7 +88,6 @@ export class RiskCategoriesService {
       const verticalToCategoryName: Record<string, string> = {
         'Cyber Vertical': 'Cyber',
         Cyber: 'Cyber',
-
         'Supply chain vertical': 'Supply Chain',
         'Supply Chain': 'Supply Chain',
 
