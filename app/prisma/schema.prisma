@@ -16,6 +16,7 @@ model Peril {
   impact               Impact?
   createdAt            DateTime                  @default(now())
   updatedAt            DateTime                  @updatedAt
+  deletedAt            DateTime?
   region               Region[]
   likelihoods          PerilLikelihood[]
   organizationRatings  OrganizationPerilRating[]
@@ -24,6 +25,8 @@ model Peril {
   riskCategories       RiskCategory[]            @relation("PerilToRiskCategory")
   ratingHistory        OrganizationPerilRatingHistory[]
   perilHistory         PerilHistory[]
+
+  @@index([deletedAt])
 }
 
 model PerilHistory {
@@ -231,11 +234,14 @@ model Service {
 model CustomRiskCategory {
   id        String   @id @default(uuid())
   userId    String
+  organizationId String?
   name      String
   slug      String   @unique
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  riskCategorySlug String?
   user      User     @relation(fields: [userId], references: [id])
+  organization Organization? @relation(fields: [organizationId], references: [id])
   perils    Peril[]  @relation("CustomPerils")
 }
 
@@ -261,6 +267,7 @@ model Organization {
   memberships          Membership[]
   perilRatings         OrganizationPerilRating[]
   perilRatingHistory   OrganizationPerilRatingHistory[]
+  customRiskCategories CustomRiskCategory[]
 }
 
 model Membership {
