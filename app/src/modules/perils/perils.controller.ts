@@ -27,7 +27,7 @@ import { PerilsQueryDto } from './dto/perils-query.dto';
 import { UpdatePerilDto } from './dto/update-peril.dto';
 import { PerilsService } from './perils.service';
 
-import { RiskCategoriesService } from './perils.service';
+import { NatureOfLossService, RiskCategoriesService } from './perils.service';
 
 @ApiTag('perils')
 @Controller('perils')
@@ -68,6 +68,17 @@ export class PerilsController {
               createdAt: { type: 'string', format: 'date-time' },
               updatedAt: { type: 'string', format: 'date-time' },
               riskCategories: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    id: { type: 'string' },
+                    slug: { type: 'string' },
+                    name: { type: 'string' },
+                  },
+                },
+              },
+              natureOfLosses: {
                 type: 'array',
                 items: {
                   type: 'object',
@@ -214,5 +225,58 @@ export class RiskCategoriesController {
   async findAll(): Promise<{ id: string; slug: string; name: string }[]> {
     this.logger.log('GET /risk-categories called');
     return this.riskCategoriesService.findAll();
+  }
+}
+
+@ApiTag('nature-of-loss')
+@Controller('nature-of-loss')
+@UseGuards(ClerkAuthGuard)
+export class NatureOfLossController {
+  private readonly logger = new Logger(NatureOfLossController.name);
+
+  constructor(private readonly natureOfLossService: NatureOfLossService) {}
+
+  @Get()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get nature of loss',
+    description:
+      'Returns all nature of loss records (id, slug, name, definition, primary/secondary owners), sorted by name.',
+  })
+  @ApiOkResponse({
+    description: 'Returns nature of loss records',
+    schema: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          slug: { type: 'string' },
+          name: { type: 'string' },
+          definition: { type: 'string' },
+          primaryOwner: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              name: { type: 'string' },
+            },
+          },
+          secondaryOwners: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                name: { type: 'string' },
+              },
+            },
+          },
+        },
+      },
+    },
+  })
+  async findAll(): Promise<any[]> {
+    this.logger.log('GET /nature-of-loss called');
+    return this.natureOfLossService.findAll();
   }
 }

@@ -1,29 +1,25 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
-import { Impact } from '@prisma/client';
+import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import { downloadExcelWithHighlights } from '../../common/utils/excel-highlight.util';
-import { getWorkbookAsJsonFromBuffer } from '../../common/utils/excel-parser.util';
-import { PreviewStatus } from '../../common/utils/preview-status.enum';
-import { slugify } from '../../common/utils/slugify.util';
 import { ImportLogService } from '../import-log/import-log.service';
+import { PreviewStatus } from '../../common/utils/preview-status.enum';
+import { InvalidItemDto } from '../../common/dto/import-common.dto';
+import { getWorkbookAsJsonFromBuffer } from '../../common/utils/excel-parser.util';
+import { slugify } from '../../common/utils/slugify.util';
+import { downloadExcelWithHighlights } from '../../common/utils/excel-highlight.util';
 import {
   PerilLikelihoodImportPreviewResponseDto,
   PerilLikelihoodPreviewItem,
 } from './dto/preview-response.dto';
-import { isEmptyOrHeaderRow, parsePerilRow } from './utils/row-parser.util';
-import {
-  createInvalidItemDto,
-  validatePerilRow,
-} from './validators/peril-row.validator';
 import {
   filterAllowedSheets,
   findMissingSheets,
   validateRequiredColumnsForSheet,
 } from './validators/workbook.validator';
+import { validatePerilRow } from './validators/peril-row.validator';
+import { isEmptyOrHeaderRow, parsePerilRow } from './utils/row-parser.util';
 
 type LatestPerilLikelihoodRow = {
   Title: string;
-  'Impact of Peril'?: string;
   [key: `EU ${string}`]: string | number | undefined;
   [key: `US ${string}`]: string | number | undefined;
   [key: `UK ${string}`]: string | number | undefined;
@@ -35,8 +31,6 @@ export class PerilLikelihoodService {
     private readonly prisma: PrismaService,
     private readonly importLogService: ImportLogService,
   ) {}
-
-  private readonly VALID_IMPACTS: Set<Impact> = new Set(Object.values(Impact));
 
   async validateAndPreview(
     fileBuffer: Buffer,
@@ -86,8 +80,8 @@ export class PerilLikelihoodService {
       }
 
       const previewItems: PerilLikelihoodPreviewItem[] = [];
-      const invalidItemsDetails = [];
-      let invalidItems = 0;
+      const invalidItemsDetails: InvalidItemDto[] = [];
+      const invalidItems = 0;
 
       // Process each sheet
       for (const sheetName of sheetsToProcess) {
@@ -113,21 +107,9 @@ export class PerilLikelihoodService {
               where: { name: parsedRow.title },
             }));
 
-          if (!existingPeril) {
-            const errorMessage = `Peril not found for title='${parsedRow.title}' (slug='${slug}')`;
-            invalidItems++;
-            invalidItemsDetails.push(
-              createInvalidItemDto(
-                row,
-                excelRowNumber,
-                sheetName,
-                errorMessage,
-              ),
-            );
-            continue;
-          }
+          const isNewPeril = !existingPeril;
 
-          // Validate row
+          // Validate row - peril may be null; a new peril is created on import
           const validationResult = validatePerilRow(
             row,
             existingPeril,
@@ -138,43 +120,22 @@ export class PerilLikelihoodService {
             excelRowNumber,
           );
 
-          // Check for duplicate record
-          let status =
+          const status =
             validationResult.warnings.length > 0
               ? PreviewStatus.NEED_REVIEW
               : PreviewStatus.READY;
 
-          // dated 02 of the month to account for timezone differences
-          const createdAt = new Date(`${year}-${month}-02`);
-
-          // Check if a record exists with matching perilId and createdAt
-          const existingRecord = await this.prisma.perilLikelihood.findFirst({
-            where: {
-              perilId: existingPeril.id,
-              createdAt,
-            },
-          });
-
-          if (existingRecord) {
-            status = PreviewStatus.DUPLICATE;
-          }
-
-          // IN validateAndPreview, AFTER parsePerilRow:
-          const parsedImpact =
-            parsedRow.impact &&
-            this.VALID_IMPACTS.has(parsedRow.impact as Impact)
-              ? (parsedRow.impact as Impact)
-              : undefined;
-
           previewItems.push({
             rowData: {
-              perilId: existingPeril.id,
+              perilId: existingPeril?.id ?? null,
               perilName: parsedRow.title,
               perilSlug: slug,
-              impact: parsedImpact,
               eu: validationResult.eu,
               us: validationResult.us,
               uk: validationResult.uk,
+              isNewPeril,
+              description: validationResult.description,
+              impact: validationResult.impact ?? null,
             },
             _data: {
               row: excelRowNumber,
@@ -225,6 +186,45 @@ export class PerilLikelihoodService {
     }
   }
 
+  /**
+   * Resolves the peril id for a preview item, creating the peril first when
+   * it doesn't exist yet. New perils are linked to the risk category matching
+   * the sheet they were found in (sheet names are risk category slugs).
+   */
+  private async getOrCreatePerilId(
+    item: PerilLikelihoodPreviewItem,
+  ): Promise<string> {
+    if (item.rowData.perilId) {
+      return item.rowData.perilId;
+    }
+
+    const riskCategory = await this.prisma.riskCategory.findFirst({
+      where: { slug: item._data.sheetName },
+      select: { id: true },
+    });
+
+    const peril = await this.prisma.peril.upsert({
+      where: { slug: item.rowData.perilSlug },
+      update: {},
+      create: {
+        name: item.rowData.perilName,
+        slug: item.rowData.perilSlug,
+        description: item.rowData.description || '',
+        impact: item.rowData.impact ?? undefined,
+        region: [],
+        ...(riskCategory
+          ? { riskCategories: { connect: { id: riskCategory.id } } }
+          : {}),
+      },
+    });
+
+    console.log(
+      `Created Peril: id=${peril.id}, name='${peril.name}', slug='${peril.slug}'`,
+    );
+
+    return peril.id;
+  }
+
   async importData(
     fileBuffer: Buffer,
     month: string,
@@ -253,14 +253,6 @@ export class PerilLikelihoodService {
 
       // Only import items with allowed statuses
       for (const item of preview.data) {
-        // Skip items with DUPLICATE status
-        if (item._data.status === PreviewStatus.DUPLICATE) {
-          console.warn(
-            `${preview.monthAsString} likelihoods: skipping duplicate item - perilId=${item.rowData.perilId}, perilName='${item.rowData.perilName}'`,
-          );
-          continue;
-        }
-
         // Skip items that don't have an allowed status
         if (!allowedStatusesSet.has(item._data.status)) {
           console.warn(
@@ -269,74 +261,47 @@ export class PerilLikelihoodService {
           continue;
         }
 
-        if (!item.rowData.perilId) {
-          console.warn(
-            `${preview.monthAsString} likelihoods: skipping item without perilId - ${item.rowData.perilName}`,
-          );
-          continue;
-        }
-
-        const likelihoodData = {
-          perilId: item.rowData.perilId,
-          eu: item.rowData.eu,
-          us: item.rowData.us,
-          uk: item.rowData.uk,
-          createdAt,
-        };
-
         try {
-          const [currentPeril, prevLikelihood] = await Promise.all([
-            this.prisma.peril.findUnique({
-              where: { id: item.rowData.perilId },
-              select: { impact: true, createdAt: true, updatedAt: true },
-            }),
-            this.prisma.perilLikelihood.findFirst({
-              where: { perilId: item.rowData.perilId },
-              orderBy: { createdAt: 'desc' },
-            }),
-          ]);
+          const perilId = await this.getOrCreatePerilId(item);
 
-          await this.prisma.perilHistory.create({
-            data: {
-              perilId: item.rowData.perilId,
-              impact: currentPeril?.impact ?? null,
-              eu: prevLikelihood?.eu ?? null,
-              us: prevLikelihood?.us ?? null,
-              uk: prevLikelihood?.uk ?? null,
-              likelihoodCreatedAt: prevLikelihood?.createdAt ?? new Date(),
-              likelihoodUpdatedAt: prevLikelihood?.updatedAt ?? new Date(),
-            },
-          });
-
-          await this.prisma.perilLikelihood.create({
-            data: likelihoodData,
-          });
-
-          if (item.rowData.impact) {
-            await this.prisma.peril.update({
-              where: { id: item.rowData.perilId },
-              data: { impact: item.rowData.impact },
+          const savedLikelihood = await this.prisma.$transaction(async (tx) => {
+            const existing = await tx.perilLikelihood.findFirst({
+              where: { perilId, createdAt },
             });
-          }
 
+            if (existing) {
+              return tx.perilLikelihood.update({
+                where: { id: existing.id },
+                data: {
+                  eu: item.rowData.eu,
+                  us: item.rowData.us,
+                  uk: item.rowData.uk,
+                },
+              });
+            }
+
+            return tx.perilLikelihood.create({
+              data: {
+                perilId,
+                eu: item.rowData.eu,
+                us: item.rowData.us,
+                uk: item.rowData.uk,
+                createdAt,
+              },
+            });
+          });
+
+          console.log(
+            `Upserted PerilLikelihood: id=${savedLikelihood.id}, perilId=${perilId}, perilName='${item.rowData.perilName}', sheet='${item._data.sheetName}'`,
+          );
           importedCount++;
-        } catch (createError: any) {
-          // Check if it's a unique constraint violation or duplicate
-          if (
-            createError?.code === 'P2002' ||
-            createError?.message?.includes('Unique constraint')
-          ) {
-            console.warn(
-              `Skipping duplicate PerilLikelihood for perilId=${item.rowData.perilId}, perilName='${item.rowData.perilName}', sheet='${item._data.sheetName}': ${createError.message}`,
-            );
-            // Append-only: duplicates are skipped, not updated
-          } else {
-            console.error(
-              `Failed to create PerilLikelihood for perilId=${item.rowData.perilId}, perilName='${item.rowData.perilName}', sheet='${item._data.sheetName}':`,
-              createError,
-            );
-            throw createError;
-          }
+        } catch (writeError) {
+          const errorMessage =
+            writeError instanceof Error ? writeError.message : 'Unknown error';
+          console.error(
+            `Failed to upsert PerilLikelihood for perilName='${item.rowData.perilName}', sheet='${item._data.sheetName}': ${errorMessage}`,
+          );
+          throw writeError;
         }
       }
 

@@ -1,6 +1,5 @@
 type LatestPerilLikelihoodRow = {
   Title: string;
-  'Impact of Peril'?: string;
   [key: `EU ${string}`]: string | number | undefined;
   [key: `US ${string}`]: string | number | undefined;
   [key: `UK ${string}`]: string | number | undefined;
@@ -49,15 +48,9 @@ export function columnExists(
  */
 export function parsePerilRow(row: LatestPerilLikelihoodRow) {
   const title = row.Title ? String(row.Title) : '';
-  const impactRaw = getColumnValue(row, 'Impact of Peril');
-  const impact =
-    typeof impactRaw === 'string'
-      ? impactRaw.trim().toUpperCase()
-      : typeof impactRaw === 'number'
-        ? String(impactRaw).toUpperCase()
-        : null;
-
-  return { title: title.trim(), impact };
+  return {
+    title: title.trim(),
+  };
 }
 
 /**

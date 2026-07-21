@@ -57,6 +57,17 @@ export class CreatePerilDto {
   riskCategoryIds?: string[];
 
   @ApiPropertyOptional({
+    description: 'Nature of loss IDs to associate this peril with',
+    type: [String],
+    example: ['123e4567-e89b-12d3-a456-426614174000'],
+  })
+  @IsArray()
+  @ArrayUnique()
+  @IsString({ each: true })
+  @IsOptional()
+  natureOfLossIds?: string[];
+
+  @ApiPropertyOptional({
     description:
       'EU likelihood rating. Must be provided together with usLikelihood and ukLikelihood.',
     enum: Likelihood,

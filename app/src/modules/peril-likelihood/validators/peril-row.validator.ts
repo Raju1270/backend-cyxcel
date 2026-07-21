@@ -1,7 +1,7 @@
-import { InvalidItemDto } from '../../../common/dto/import-common.dto';
-import { PreviewStatus } from '../../../common/utils/preview-status.enum';
 import { Likelihood } from '../utils/likelihood.enum';
+import { Impact } from '../utils/impact.enum';
 import { parseLikelihood } from '../utils/likelihood-parser.util';
+import { parseImpact } from '../utils/impact-parser.util';
 import { getColumnValue, columnExists } from '../utils/row-parser.util';
 
 type LatestPerilLikelihoodRow = {
@@ -18,31 +18,13 @@ type Peril = {
 };
 
 export interface ValidationResult {
-  isValid: boolean;
-  error?: string;
   warnings: string[];
-  peril?: Peril;
-  eu?: Likelihood;
-  us?: Likelihood;
-  uk?: Likelihood;
-}
-
-/**
- * Validate that peril exists
- */
-function validatePerilExists(
-  peril: Peril | null,
-  title: string,
-  slug: string,
-): { isValid: boolean; error?: string; peril?: Peril } {
-  if (!peril) {
-    return {
-      isValid: false,
-      error: `Peril not found for title='${title}' (slug='${slug}')`,
-    };
-  }
-
-  return { isValid: true, peril };
+  peril: Peril | null;
+  eu: Likelihood;
+  us: Likelihood;
+  uk: Likelihood;
+  description: string;
+  impact?: Impact;
 }
 
 /**
@@ -108,7 +90,33 @@ function parseLikelihoodValues(
 }
 
 /**
- * Validate peril row and return validation result
+ * Parse description and impact for a row - used when the peril doesn't exist
+ * yet and needs to be created. Columns are optional; description defaults to
+ * an empty string and impact is left undefined when not present/parseable.
+ */
+function parseDescriptionAndImpact(row: LatestPerilLikelihoodRow): {
+  description: string;
+  impact?: Impact;
+} {
+  const descriptionValue = getColumnValue(row, 'Description');
+  const description =
+    typeof descriptionValue === 'string'
+      ? descriptionValue.trim()
+      : typeof descriptionValue === 'number'
+        ? String(descriptionValue)
+        : '';
+
+  const impactValue =
+    getColumnValue(row, 'Impact of Peril') ?? getColumnValue(row, 'Impact');
+  const impact = parseImpact(impactValue);
+
+  return { description, impact };
+}
+
+/**
+ * Validate peril row and return validation result.
+ * `peril` may be null when the title doesn't match any existing peril yet -
+ * that peril will be created on import rather than treated as an error.
  */
 export function validatePerilRow(
   row: LatestPerilLikelihoodRow,
@@ -120,15 +128,6 @@ export function validatePerilRow(
   excelRowNumber: number,
 ): ValidationResult {
   const warnings: string[] = [];
-
-  const title = row.Title ? String(row.Title).trim() : '';
-  if (!peril) {
-    return {
-      isValid: false,
-      error: `Peril not found for title='${title}'`,
-      warnings: [],
-    };
-  }
 
   // Check for missing columns
   const missingColumnWarnings = checkMissingColumns(
@@ -149,31 +148,16 @@ export function validatePerilRow(
     ukColumn,
   );
 
+  // Parse description/impact - only used when the peril needs to be created
+  const { description, impact } = parseDescriptionAndImpact(row);
+
   return {
-    isValid: true,
     warnings,
     peril,
     eu: likelihoodValues.eu,
     us: likelihoodValues.us,
     uk: likelihoodValues.uk,
-  };
-}
-
-/**
- * Create invalid item DTO
- */
-export function createInvalidItemDto(
-  row: LatestPerilLikelihoodRow,
-  excelRowNumber: number,
-  sheetName: string,
-  error: string,
-): InvalidItemDto {
-  return {
-    rowData: row,
-    _data: {
-      row: excelRowNumber,
-      sheetName: sheetName,
-      error,
-    },
+    description,
+    impact,
   };
 }

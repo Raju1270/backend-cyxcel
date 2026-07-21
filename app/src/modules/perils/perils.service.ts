@@ -18,11 +18,28 @@ const RISK_CATEGORY_SELECT = {
   name: true,
 } satisfies Prisma.RiskCategorySelect;
 
+const NATURE_OF_LOSS_SELECT = {
+  id: true,
+  slug: true,
+  name: true,
+} satisfies Prisma.NatureOfLossSelect;
+
 const PERIL_INCLUDE = {
   riskCategories: {
     select: RISK_CATEGORY_SELECT,
   },
+  natureOfLosses: {
+    select: NATURE_OF_LOSS_SELECT,
+  },
 } satisfies Prisma.PerilInclude;
+
+// Prisma's default interactive-transaction timeout (5000ms) is too tight for
+// remote/pooled DB connections where each round-trip in the transaction adds
+// meaningful latency.
+const TRANSACTION_OPTIONS = {
+  timeout: 15000,
+  maxWait: 10000,
+};
 
 interface LikelihoodTriad {
   euLikelihood?: Likelihood;
@@ -248,6 +265,13 @@ export class PerilsService {
                 },
               }
             : {}),
+          ...(dto.natureOfLossIds
+            ? {
+                natureOfLosses: {
+                  connect: dto.natureOfLossIds.map((id) => ({ id })),
+                },
+              }
+            : {}),
         },
         include: PERIL_INCLUDE,
       });
@@ -260,7 +284,7 @@ export class PerilsService {
       }
 
       return peril;
-    });
+    }, TRANSACTION_OPTIONS);
 
     this.logger.log(`Created Peril: id=${created.id}, slug=${created.slug}`);
 
@@ -331,10 +355,17 @@ export class PerilsService {
                 },
               }
             : {}),
+          ...(dto.natureOfLossIds !== undefined
+            ? {
+                natureOfLosses: {
+                  set: dto.natureOfLossIds.map((nolId) => ({ id: nolId })),
+                },
+              }
+            : {}),
         },
         include: PERIL_INCLUDE,
       });
-    });
+    }, TRANSACTION_OPTIONS);
 
     this.logger.log(`Updated Peril: id=${updated.id}, slug=${updated.slug}`);
 
@@ -374,6 +405,30 @@ export class RiskCategoriesService {
   async findAll() {
     return this.prisma.riskCategory.findMany({
       select: { id: true, slug: true, name: true },
+      orderBy: { name: 'asc' },
+    });
+  }
+}
+
+const RISK_OWNER_SELECT = {
+  id: true,
+  name: true,
+} satisfies Prisma.RiskOwnerSelect;
+
+@Injectable()
+export class NatureOfLossService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async findAll() {
+    return this.prisma.natureOfLoss.findMany({
+      select: {
+        id: true,
+        slug: true,
+        name: true,
+        definition: true,
+        primaryOwner: { select: RISK_OWNER_SELECT },
+        secondaryOwners: { select: RISK_OWNER_SELECT },
+      },
       orderBy: { name: 'asc' },
     });
   }
