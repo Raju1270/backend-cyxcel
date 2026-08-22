@@ -43,6 +43,8 @@ export class PerilLikelihoodService {
         month: 'long',
       },
     );
+    // dated 02 of the month to account for timezone differences
+    const createdAt = new Date(`${year}-${month}-02`);
 
     try {
       const workbook = getWorkbookAsJsonFromBuffer(fileBuffer);
@@ -116,6 +118,21 @@ export class PerilLikelihoodService {
       const perilBySlug = new Map(existingPerils.map((p) => [p.slug, p]));
       const perilByName = new Map(existingPerils.map((p) => [p.name, p]));
 
+      // Perils that already have a record for the target month - importing
+      // these will overwrite existing values, so flag it for visibility
+      // without blocking the import (re-imports/corrections should keep
+      // working by default).
+      const existingPerilIds = existingPerils.map((p) => p.id);
+      const monthlyLikelihoods = existingPerilIds.length
+        ? await this.prisma.perilLikelihood.findMany({
+            where: { perilId: { in: existingPerilIds }, createdAt },
+            select: { perilId: true },
+          })
+        : [];
+      const perilIdsWithMonthData = new Set(
+        monthlyLikelihoods.map((l) => l.perilId),
+      );
+
       // Process each sheet
       for (const sheetName of sheetsToProcess) {
         const rows = workbook[sheetName] as LatestPerilLikelihoodRow[];
@@ -155,6 +172,15 @@ export class PerilLikelihoodService {
               ? PreviewStatus.NEED_REVIEW
               : PreviewStatus.READY;
 
+          const hasExistingMonthData =
+            !!existingPeril && perilIdsWithMonthData.has(existingPeril.id);
+          const warnings = hasExistingMonthData
+            ? [
+                ...validationResult.warnings,
+                `${parsedRow.title} already has data for ${monthAsString} ${year} - importing will overwrite the existing values`,
+              ]
+            : validationResult.warnings;
+
           previewItems.push({
             rowData: {
               perilId: existingPeril?.id ?? null,
@@ -164,13 +190,14 @@ export class PerilLikelihoodService {
               us: validationResult.us,
               uk: validationResult.uk,
               isNewPeril,
+              hasExistingMonthData,
               description: validationResult.description,
               impact: validationResult.impact ?? null,
             },
             _data: {
               row: excelRowNumber,
               sheetName,
-              warnings: validationResult.warnings,
+              warnings,
               status,
             },
           });
@@ -217,48 +244,92 @@ export class PerilLikelihoodService {
   }
 
   /**
-   * Resolves the peril id for a preview item, creating the peril first when
-   * it doesn't exist yet. New perils are linked to the risk category matching
-   * the sheet they were found in (sheet names are risk category slugs).
+   * Resolves peril ids for a batch of preview items in a handful of queries
+   * total (rather than one round trip per row), creating any perils that
+   * don't exist yet. New perils are linked to the risk category matching the
+   * sheet they were found in (sheet names are risk category slugs).
    */
-  private async getOrCreatePerilId(
-    item: PerilLikelihoodPreviewItem,
-    riskCategoryCache: Map<string, { id: string } | null>,
-  ): Promise<string> {
-    if (item.rowData.perilId) {
-      return item.rowData.perilId;
+  private async resolvePerilIdsInBatch(
+    items: PerilLikelihoodPreviewItem[],
+  ): Promise<Map<PerilLikelihoodPreviewItem, string>> {
+    const perilIdByItem = new Map<PerilLikelihoodPreviewItem, string>();
+    const newPerilItems: PerilLikelihoodPreviewItem[] = [];
+
+    for (const item of items) {
+      if (item.rowData.perilId) {
+        perilIdByItem.set(item, item.rowData.perilId);
+      } else {
+        newPerilItems.push(item);
+      }
     }
 
-    const sheetSlug = item._data.sheetName;
-    let riskCategory = riskCategoryCache.get(sheetSlug);
-    if (riskCategory === undefined) {
-      riskCategory = await this.prisma.riskCategory.findFirst({
-        where: { slug: sheetSlug },
-        select: { id: true },
-      });
-      riskCategoryCache.set(sheetSlug, riskCategory);
+    if (newPerilItems.length === 0) {
+      return perilIdByItem;
     }
 
-    const peril = await this.prisma.peril.upsert({
-      where: { slug: item.rowData.perilSlug },
-      update: {},
-      create: {
+    // The same new peril can appear on more than one sheet - dedupe by slug
+    // so it's only created once.
+    const uniqueNewPerils = new Map<string, PerilLikelihoodPreviewItem>();
+    for (const item of newPerilItems) {
+      uniqueNewPerils.set(item.rowData.perilSlug, item);
+    }
+
+    const sheetSlugs = Array.from(
+      new Set(newPerilItems.map((item) => item._data.sheetName)),
+    );
+    const riskCategories = await this.prisma.riskCategory.findMany({
+      where: { slug: { in: sheetSlugs } },
+      select: { id: true, slug: true },
+    });
+    const riskCategoryBySlug = new Map(
+      riskCategories.map((rc) => [rc.slug, rc]),
+    );
+
+    await this.prisma.peril.createMany({
+      data: Array.from(uniqueNewPerils.values()).map((item) => ({
         name: item.rowData.perilName,
         slug: item.rowData.perilSlug,
         description: item.rowData.description || '',
         impact: item.rowData.impact ?? undefined,
         region: [],
-        ...(riskCategory
-          ? { riskCategories: { connect: { id: riskCategory.id } } }
-          : {}),
-      },
+      })),
+      skipDuplicates: true,
     });
 
-    console.log(
-      `Created Peril: id=${peril.id}, name='${peril.name}', slug='${peril.slug}'`,
+    const createdPerils = await this.prisma.peril.findMany({
+      where: { slug: { in: Array.from(uniqueNewPerils.keys()) } },
+      select: { id: true, slug: true },
+    });
+    const perilIdBySlug = new Map(createdPerils.map((p) => [p.slug, p.id]));
+
+    // Connect each newly-resolved peril to its sheet's risk category - bounded
+    // by the number of distinct new perils, not the number of rows.
+    await Promise.all(
+      Array.from(uniqueNewPerils.entries()).map(([slug, item]) => {
+        const riskCategory = riskCategoryBySlug.get(item._data.sheetName);
+        const perilId = perilIdBySlug.get(slug);
+        if (!riskCategory || !perilId) {
+          return Promise.resolve();
+        }
+        return this.prisma.peril.update({
+          where: { id: perilId },
+          data: { riskCategories: { connect: { id: riskCategory.id } } },
+        });
+      }),
     );
 
-    return peril.id;
+    for (const item of newPerilItems) {
+      const perilId = perilIdBySlug.get(item.rowData.perilSlug);
+      if (perilId) {
+        perilIdByItem.set(item, perilId);
+      } else {
+        console.error(
+          `Failed to resolve peril id for new peril '${item.rowData.perilName}' (slug='${item.rowData.perilSlug}')`,
+        );
+      }
+    }
+
+    return perilIdByItem;
   }
 
   async importData(
@@ -276,10 +347,6 @@ export class PerilLikelihoodService {
       // dated 02 of the month to account for timezone differences
       const createdAt = new Date(`${year}-${month}-02`);
 
-      let importedCount = 0;
-      const riskCategoryCache = new Map<string, { id: string } | null>();
-
-      // Filter items based on allowed statuses
       // Never import items with DUPLICATE status
       const allowedStatusesSet = new Set(allowedStatuses);
       if (allowedStatusesSet.has(PreviewStatus.DUPLICATE)) {
@@ -289,84 +356,114 @@ export class PerilLikelihoodService {
       }
 
       // Only import items with allowed statuses
-      for (const item of preview.data) {
-        // Skip items that don't have an allowed status
-        if (!allowedStatusesSet.has(item._data.status)) {
+      const itemsToImport = preview.data.filter((item) => {
+        const allowed = allowedStatusesSet.has(item._data.status);
+        if (!allowed) {
           console.warn(
             `${preview.monthAsString} likelihoods: skipping item with status '${item._data.status}' - perilId=${item.rowData.perilId}, perilName='${item.rowData.perilName}'`,
           );
-          continue;
         }
+        return allowed;
+      });
 
-        try {
-          const perilId = await this.getOrCreatePerilId(
-            item,
-            riskCategoryCache,
-          );
+      const perilIdByItem = await this.resolvePerilIdsInBatch(itemsToImport);
 
-          const savedLikelihood = await this.prisma.$transaction(async (tx) => {
-            const existing = await tx.perilLikelihood.findFirst({
-              where: { perilId, createdAt },
-            });
-
-            if (existing) {
-              // Only overwriting an existing month's numbers can lose data,
-              // so only that case needs a history snapshot - and it must
-              // snapshot that same month's prior values (not just "whatever
-              // is newest"), otherwise backdated imports would record a
-              // later month's numbers as if they preceded this one.
-              const currentPeril = await tx.peril.findUnique({
-                where: { id: perilId },
-                select: { impact: true },
-              });
-
-              await tx.perilHistory.create({
-                data: {
-                  perilId,
-                  impact: currentPeril?.impact ?? null,
-                  eu: existing.eu,
-                  us: existing.us,
-                  uk: existing.uk,
-                  updatedById: userId,
-                  likelihoodCreatedAt: existing.createdAt,
-                  likelihoodUpdatedAt: existing.updatedAt,
-                },
-              });
-
-              return tx.perilLikelihood.update({
-                where: { id: existing.id },
-                data: {
-                  eu: item.rowData.eu,
-                  us: item.rowData.us,
-                  uk: item.rowData.uk,
-                },
-              });
-            }
-
-            return tx.perilLikelihood.create({
-              data: {
-                perilId,
-                eu: item.rowData.eu,
-                us: item.rowData.us,
-                uk: item.rowData.uk,
-                createdAt,
-              },
-            });
-          });
-
-          console.log(
-            `Upserted PerilLikelihood: id=${savedLikelihood.id}, perilId=${perilId}, perilName='${item.rowData.perilName}', sheet='${item._data.sheetName}'`,
-          );
-          importedCount++;
-        } catch (writeError) {
-          const errorMessage =
-            writeError instanceof Error ? writeError.message : 'Unknown error';
-          console.error(
-            `Failed to upsert PerilLikelihood for perilName='${item.rowData.perilName}', sheet='${item._data.sheetName}': ${errorMessage}`,
-          );
-          throw writeError;
+      // The same peril can appear more than once in one import (e.g. across
+      // sheets) - the last row for a given peril wins, matching what
+      // sequential row-by-row writes used to produce.
+      const latestByPerilId = new Map<
+        string,
+        { item: PerilLikelihoodPreviewItem; perilId: string }
+      >();
+      for (const item of itemsToImport) {
+        const perilId = perilIdByItem.get(item);
+        if (perilId) {
+          latestByPerilId.set(perilId, { item, perilId });
         }
       }
+      const entries = Array.from(latestByPerilId.values());
+      const perilIds = entries.map((entry) => entry.perilId);
+
+      const existingLikelihoods = perilIds.length
+        ? await this.prisma.perilLikelihood.findMany({
+            where: { perilId: { in: perilIds }, createdAt },
+          })
+        : [];
+      const existingByPerilId = new Map(
+        existingLikelihoods.map((likelihood) => [
+          likelihood.perilId,
+          likelihood,
+        ]),
+      );
+
+      const toCreate = entries.filter(
+        (entry) => !existingByPerilId.has(entry.perilId),
+      );
+      const toUpdate = entries.filter((entry) =>
+        existingByPerilId.has(entry.perilId),
+      );
+
+      // Only overwriting an existing month's numbers can lose data, so only
+      // that case needs a history snapshot - and it must snapshot that same
+      // month's prior values (not just "whatever is newest"), otherwise
+      // backdated imports would record a later month's numbers as if they
+      // preceded this one.
+      const perilImpacts = toUpdate.length
+        ? await this.prisma.peril.findMany({
+            where: { id: { in: toUpdate.map((entry) => entry.perilId) } },
+            select: { id: true, impact: true },
+          })
+        : [];
+      const impactByPerilId = new Map(
+        perilImpacts.map((peril) => [peril.id, peril.impact]),
+      );
+
+      const historyData = toUpdate.map(({ perilId }) => {
+        const existing = existingByPerilId.get(perilId);
+        return {
+          perilId,
+          impact: impactByPerilId.get(perilId) ?? null,
+          eu: existing?.eu,
+          us: existing?.us,
+          uk: existing?.uk,
+          updatedById: userId,
+          likelihoodCreatedAt: existing?.createdAt,
+          likelihoodUpdatedAt: existing?.updatedAt,
+        };
+      });
+
+      const createData = toCreate.map(({ item, perilId }) => ({
+        perilId,
+        eu: item.rowData.eu,
+        us: item.rowData.us,
+        uk: item.rowData.uk,
+        createdAt,
+      }));
+
+      await this.prisma.$transaction([
+        ...(historyData.length
+          ? [this.prisma.perilHistory.createMany({ data: historyData })]
+          : []),
+        ...(createData.length
+          ? [this.prisma.perilLikelihood.createMany({ data: createData })]
+          : []),
+        ...toUpdate.map(({ item, perilId }) =>
+          this.prisma.perilLikelihood.update({
+            where: { id: existingByPerilId.get(perilId)?.id },
+            data: {
+              eu: item.rowData.eu,
+              us: item.rowData.us,
+              uk: item.rowData.uk,
+            },
+          }),
+        ),
+      ]);
+
+      const importedCount = entries.length;
+
+      console.log(
+        `${preview.monthAsString} likelihoods: batch-wrote ${createData.length} new and ${toUpdate.length} updated PerilLikelihood record(s)`,
+      );
 
       // Verify that records were actually created
       const actualCount = await this.prisma.perilLikelihood.count({

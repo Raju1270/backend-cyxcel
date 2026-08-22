@@ -35,6 +35,12 @@ export class PerilLikelihoodRowData {
 
   @ApiProperty({
     description:
+      'True when this peril already has data saved for the target month - importing will overwrite the existing eu/us/uk values',
+  })
+  hasExistingMonthData: boolean;
+
+  @ApiProperty({
+    description:
       'Peril description read from the "Description" column - only used when creating a new peril',
   })
   description: string;
