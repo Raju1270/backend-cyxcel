@@ -270,10 +270,14 @@ export class PerilLikelihoodService {
    * Resolves peril ids for a batch of preview items in a handful of queries
    * total (rather than one round trip per row), creating any perils that
    * don't exist yet. New perils are linked to the risk category matching the
-   * sheet they were found in (sheet names are risk category slugs).
+   * sheet they were found in (sheet names are risk category slugs), and are
+   * dated to the import's target month rather than today - otherwise a
+   * backdated import (e.g. uploading last year's data) would make brand new
+   * perils look like they were created today.
    */
   private async resolvePerilIdsInBatch(
     items: PerilLikelihoodPreviewItem[],
+    createdAt: Date,
   ): Promise<Map<PerilLikelihoodPreviewItem, string>> {
     const perilIdByItem = new Map<PerilLikelihoodPreviewItem, string>();
     const newPerilItems: PerilLikelihoodPreviewItem[] = [];
@@ -315,6 +319,7 @@ export class PerilLikelihoodService {
         description: item.rowData.description || '',
         impact: item.rowData.impact ?? undefined,
         region: [],
+        createdAt,
       })),
       skipDuplicates: true,
     });
@@ -394,7 +399,10 @@ export class PerilLikelihoodService {
         return allowed;
       });
 
-      const perilIdByItem = await this.resolvePerilIdsInBatch(itemsToImport);
+      const perilIdByItem = await this.resolvePerilIdsInBatch(
+        itemsToImport,
+        createdAt,
+      );
 
       // The same peril can appear more than once in one import (e.g. across
       // sheets) - the last row for a given peril wins, matching what
