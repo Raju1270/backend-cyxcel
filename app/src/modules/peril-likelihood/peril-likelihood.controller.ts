@@ -63,7 +63,12 @@ export class PerilLikelihoodController {
     @Body('year') year: string,
     @Body('status') status?: string | string[],
     @Req() request?: Request,
-  ): Promise<{ message: string; imported: number; actualImported?: number }> {
+  ): Promise<{
+    message: string;
+    imported: number;
+    actualImported?: number;
+    duplicateRowsMerged?: number;
+  }> {
     validateFile(file, { allowCsv: false });
     validateMonthAndYear(month, year);
 

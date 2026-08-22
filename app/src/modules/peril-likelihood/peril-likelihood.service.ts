@@ -204,6 +204,29 @@ export class PerilLikelihoodService {
         }
       }
 
+      // The same peril can appear on more than one row/sheet within a single
+      // workbook (e.g. listed under both 'cyber' and 'technology-itot') -
+      // only one PerilLikelihood record exists per peril per month, so
+      // duplicates collapse into a single write (last row wins) on import.
+      // Surface that here so the row count in this preview isn't mistaken
+      // for the number of records that will actually land in the DB.
+      const firstSeenByPerilIdentity = new Map<
+        string,
+        PerilLikelihoodPreviewItem
+      >();
+      for (const item of previewItems) {
+        const identity =
+          item.rowData.perilId ?? `new:${item.rowData.perilSlug}`;
+        const firstSeen = firstSeenByPerilIdentity.get(identity);
+        if (firstSeen) {
+          globalWarnings.push(
+            `'${item.rowData.perilName}' appears in both sheet '${firstSeen._data.sheetName}' and sheet '${item._data.sheetName}' - only one PerilLikelihood record exists per peril per month, so the row from sheet '${item._data.sheetName}' will overwrite the other on import`,
+          );
+        } else {
+          firstSeenByPerilIdentity.set(identity, item);
+        }
+      }
+
       // Count items by status
       const needReviewCount = previewItems.filter(
         (item) => item._data.status === PreviewStatus.NEED_REVIEW,
@@ -339,7 +362,12 @@ export class PerilLikelihoodService {
     allowedStatuses: PreviewStatus[] = [PreviewStatus.READY],
     userId?: string,
     filename?: string,
-  ): Promise<{ message: string; imported: number; actualImported: number }> {
+  ): Promise<{
+    message: string;
+    imported: number;
+    actualImported: number;
+    duplicateRowsMerged?: number;
+  }> {
     try {
       // Validate and get preview data first
       const preview = await this.validateAndPreview(fileBuffer, month, year);
@@ -370,16 +398,28 @@ export class PerilLikelihoodService {
 
       // The same peril can appear more than once in one import (e.g. across
       // sheets) - the last row for a given peril wins, matching what
-      // sequential row-by-row writes used to produce.
+      // sequential row-by-row writes used to produce. This is why the
+      // imported count can come out lower than the row count in the
+      // uploaded file: it's expected when validate/preview reported the
+      // same peril's duplicate rows too (see the matching warning there).
       const latestByPerilId = new Map<
         string,
         { item: PerilLikelihoodPreviewItem; perilId: string }
       >();
+      let duplicateRowsMerged = 0;
       for (const item of itemsToImport) {
         const perilId = perilIdByItem.get(item);
-        if (perilId) {
-          latestByPerilId.set(perilId, { item, perilId });
+        if (!perilId) {
+          continue;
         }
+        const prior = latestByPerilId.get(perilId);
+        if (prior) {
+          duplicateRowsMerged++;
+          console.warn(
+            `${preview.monthAsString} likelihoods: peril '${item.rowData.perilName}' appears in both sheet '${prior.item._data.sheetName}' and sheet '${item._data.sheetName}' - only one PerilLikelihood record exists per peril per month, so the row from sheet '${item._data.sheetName}' overwrites the earlier one`,
+          );
+        }
+        latestByPerilId.set(perilId, { item, perilId });
       }
       const entries = Array.from(latestByPerilId.values());
       const perilIds = entries.map((entry) => entry.perilId);
@@ -495,6 +535,7 @@ export class PerilLikelihoodService {
         message: `${preview.monthAsString} peril likelihoods uploaded successfully`,
         imported: importedCount,
         actualImported: actualCount,
+        ...(duplicateRowsMerged > 0 ? { duplicateRowsMerged } : {}),
       };
     } catch (error) {
       // Create ImportLog record for failed import
