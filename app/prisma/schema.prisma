@@ -64,6 +64,9 @@ model PerilLikelihood {
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
   peril     Peril      @relation(fields: [perilId], references: [id], onDelete: Cascade)
+
+  @@index([perilId])
+  @@index([perilId, createdAt])
 }
 
 model RiskCategory {
@@ -172,6 +175,9 @@ model Report {
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   completedAt    DateTime?
+  exposureScore  Float?
+  maturityScore  Float?
+  residualRisk   Float?
   riskCategory   RiskCategory @relation(fields: [riskCategoryId], references: [id])
   user           User         @relation(fields: [userId], references: [id])
 }
@@ -261,6 +267,7 @@ model Organization {
   name      String
   plan      Plan?    @default(basic)
   seat      Int?     @default(0)
+  regions   Region[] @default([EU, US, UK])
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

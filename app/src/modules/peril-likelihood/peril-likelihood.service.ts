@@ -83,6 +83,39 @@ export class PerilLikelihoodService {
       const invalidItemsDetails: InvalidItemDto[] = [];
       const invalidItems = 0;
 
+      // Collect every candidate title/slug up front so existing perils can be
+      // fetched in a single batched query instead of 1-2 queries per row.
+      // With an empty (or mostly empty) Peril table, the per-row lookups used
+      // to double up (slug miss -> name lookup) on every single row, which was
+      // slow enough to time out the request entirely.
+      const candidateTitles = new Set<string>();
+      const candidateSlugs = new Set<string>();
+      for (const sheetName of sheetsToProcess) {
+        const rows = workbook[sheetName] as LatestPerilLikelihoodRow[];
+        for (const row of rows) {
+          const { title } = parsePerilRow(row);
+          if (isEmptyOrHeaderRow(title)) {
+            continue;
+          }
+          candidateTitles.add(title);
+          candidateSlugs.add(slugify(title));
+        }
+      }
+
+      const existingPerils = candidateTitles.size
+        ? await this.prisma.peril.findMany({
+            where: {
+              OR: [
+                { slug: { in: Array.from(candidateSlugs) } },
+                { name: { in: Array.from(candidateTitles) } },
+              ],
+            },
+          })
+        : [];
+
+      const perilBySlug = new Map(existingPerils.map((p) => [p.slug, p]));
+      const perilByName = new Map(existingPerils.map((p) => [p.name, p]));
+
       // Process each sheet
       for (const sheetName of sheetsToProcess) {
         const rows = workbook[sheetName] as LatestPerilLikelihoodRow[];
@@ -102,10 +135,7 @@ export class PerilLikelihoodService {
 
           // Prefer unique slug lookup; fallback to name if needed
           const existingPeril =
-            (await this.prisma.peril.findFirst({ where: { slug } })) ||
-            (await this.prisma.peril.findFirst({
-              where: { name: parsedRow.title },
-            }));
+            perilBySlug.get(slug) ?? perilByName.get(parsedRow.title) ?? null;
 
           const isNewPeril = !existingPeril;
 
@@ -193,15 +223,21 @@ export class PerilLikelihoodService {
    */
   private async getOrCreatePerilId(
     item: PerilLikelihoodPreviewItem,
+    riskCategoryCache: Map<string, { id: string } | null>,
   ): Promise<string> {
     if (item.rowData.perilId) {
       return item.rowData.perilId;
     }
 
-    const riskCategory = await this.prisma.riskCategory.findFirst({
-      where: { slug: item._data.sheetName },
-      select: { id: true },
-    });
+    const sheetSlug = item._data.sheetName;
+    let riskCategory = riskCategoryCache.get(sheetSlug);
+    if (riskCategory === undefined) {
+      riskCategory = await this.prisma.riskCategory.findFirst({
+        where: { slug: sheetSlug },
+        select: { id: true },
+      });
+      riskCategoryCache.set(sheetSlug, riskCategory);
+    }
 
     const peril = await this.prisma.peril.upsert({
       where: { slug: item.rowData.perilSlug },
@@ -241,6 +277,7 @@ export class PerilLikelihoodService {
       const createdAt = new Date(`${year}-${month}-02`);
 
       let importedCount = 0;
+      const riskCategoryCache = new Map<string, { id: string } | null>();
 
       // Filter items based on allowed statuses
       // Never import items with DUPLICATE status
@@ -262,7 +299,10 @@ export class PerilLikelihoodService {
         }
 
         try {
-          const perilId = await this.getOrCreatePerilId(item);
+          const perilId = await this.getOrCreatePerilId(
+            item,
+            riskCategoryCache,
+          );
 
           const savedLikelihood = await this.prisma.$transaction(async (tx) => {
             const existing = await tx.perilLikelihood.findFirst({
@@ -270,6 +310,29 @@ export class PerilLikelihoodService {
             });
 
             if (existing) {
+              // Only overwriting an existing month's numbers can lose data,
+              // so only that case needs a history snapshot - and it must
+              // snapshot that same month's prior values (not just "whatever
+              // is newest"), otherwise backdated imports would record a
+              // later month's numbers as if they preceded this one.
+              const currentPeril = await tx.peril.findUnique({
+                where: { id: perilId },
+                select: { impact: true },
+              });
+
+              await tx.perilHistory.create({
+                data: {
+                  perilId,
+                  impact: currentPeril?.impact ?? null,
+                  eu: existing.eu,
+                  us: existing.us,
+                  uk: existing.uk,
+                  updatedById: userId,
+                  likelihoodCreatedAt: existing.createdAt,
+                  likelihoodUpdatedAt: existing.updatedAt,
+                },
+              });
+
               return tx.perilLikelihood.update({
                 where: { id: existing.id },
                 data: {
