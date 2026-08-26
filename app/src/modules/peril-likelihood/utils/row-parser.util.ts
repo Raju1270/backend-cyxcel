@@ -71,12 +71,32 @@ export function anyColumnExists(
 }
 
 /**
- * Parse peril row and extract title
+ * Parse the "Nature of loss" column into a clean list of names.
+ * Sheet stores it as a single comma-separated cell, e.g.
+ * "Data Confidentiality Breach, Data Integrity Breach" -> two entries.
+ * Matching against the DB (by name) happens in the service, not here -
+ * this just does the raw split/trim/dedupe.
+ */
+export function parseNatureOfLoss(row: LatestPerilLikelihoodRow): string[] {
+  const raw = getColumnValue(row, 'Nature of loss');
+  if (!raw) {
+    return [];
+  }
+  const names = String(raw)
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  return Array.from(new Set(names));
+}
+
+/**
+ * Parse peril row and extract title + nature of loss
  */
 export function parsePerilRow(row: LatestPerilLikelihoodRow) {
   const title = row.Title ? String(row.Title) : '';
   return {
     title: title.trim(),
+    natureOfLoss: parseNatureOfLoss(row),
   };
 }
 

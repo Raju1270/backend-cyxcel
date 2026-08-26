@@ -53,6 +53,13 @@ export class PerilLikelihoodRowData {
       'Peril impact read from the "Impact of Peril" / "Impact" column - only used when creating a new peril',
   })
   impact?: Impact | null;
+
+  @ApiProperty({
+    type: [String],
+    description:
+      'Nature of loss names read from the "Nature of loss" column that matched an existing NatureOfLoss record by name - these get connected to the peril on import. Names in the sheet that did not match any existing record are dropped here and surfaced as a warning instead.',
+  })
+  natureOfLoss: string[];
 }
 
 export class PerilLikelihoodPreviewItem {

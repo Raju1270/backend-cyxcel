@@ -116,17 +116,33 @@ export class PerilLikelihoodService {
       // slow enough to time out the request entirely.
       const candidateTitles = new Set<string>();
       const candidateSlugs = new Set<string>();
+      const candidateNatureOfLossNames = new Set<string>();
       for (const sheetName of sheetsToProcess) {
         const rows = workbook[sheetName] as LatestPerilLikelihoodRow[];
         for (const row of rows) {
-          const { title } = parsePerilRow(row);
+          const { title, natureOfLoss } = parsePerilRow(row);
           if (isEmptyOrHeaderRow(title)) {
             continue;
           }
           candidateTitles.add(title);
           candidateSlugs.add(slugify(title));
+          natureOfLoss.forEach((n) => candidateNatureOfLossNames.add(n));
         }
       }
+
+      // Nature of loss records are pre-seeded (they require a primaryOwner
+      // that the sheet doesn't provide), so we only ever match by name here
+      // - never create. Anything in the sheet that doesn't match becomes a
+      // per-row warning below instead of silently vanishing.
+      const existingNatureOfLosses = candidateNatureOfLossNames.size
+        ? await this.prisma.natureOfLoss.findMany({
+            where: { name: { in: Array.from(candidateNatureOfLossNames) } },
+            select: { id: true, name: true },
+          })
+        : [];
+      const natureOfLossByName = new Map(
+        existingNatureOfLosses.map((n) => [n.name, n]),
+      );
 
       const existingPerils = candidateTitles.size
         ? await this.prisma.peril.findMany({
@@ -196,14 +212,30 @@ export class PerilLikelihoodService {
               ? PreviewStatus.NEED_REVIEW
               : PreviewStatus.READY;
 
+          const matchedNatureOfLoss: string[] = [];
+          const unmatchedNatureOfLoss: string[] = [];
+          for (const name of parsedRow.natureOfLoss) {
+            if (natureOfLossByName.has(name)) {
+              matchedNatureOfLoss.push(name);
+            } else {
+              unmatchedNatureOfLoss.push(name);
+            }
+          }
+
           const hasExistingMonthData =
             !!existingPeril && perilIdsWithMonthData.has(existingPeril.id);
-          const warnings = hasExistingMonthData
-            ? [
-                ...validationResult.warnings,
-                `${parsedRow.title} already has data for ${monthAsString} ${year} - importing will overwrite the existing values`,
-              ]
-            : validationResult.warnings;
+          const warnings = [
+            ...validationResult.warnings,
+            ...(hasExistingMonthData
+              ? [
+                  `${parsedRow.title} already has data for ${monthAsString} ${year} - importing will overwrite the existing values`,
+                ]
+              : []),
+            ...unmatchedNatureOfLoss.map(
+              (name) =>
+                `Nature of loss '${name}' for '${parsedRow.title}' does not match any existing record - it will be skipped`,
+            ),
+          ];
 
           previewItems.push({
             rowData: {
@@ -217,6 +249,7 @@ export class PerilLikelihoodService {
               hasExistingMonthData,
               description: validationResult.description,
               impact: validationResult.impact ?? null,
+              natureOfLoss: matchedNatureOfLoss,
             },
             _data: {
               row: excelRowNumber,
@@ -464,6 +497,59 @@ export class PerilLikelihoodService {
             itemsToImport,
             createdAt,
           );
+
+          // Connect Nature of loss <-> Peril. Grouped by natureOfLoss name
+          // (not one query per row) - a workbook typically has a small,
+          // fixed set of distinct nature-of-loss values reused across many
+          // perils, so this stays cheap even for a large import. `connect`
+          // is idempotent on re-import (duplicate links are no-ops), but
+          // note it only ADDS links - if a row's nature-of-loss list
+          // shrinks on a later re-import, the old link isn't removed.
+          const namesInImport = new Set<string>();
+          for (const item of itemsToImport) {
+            item.rowData.natureOfLoss.forEach((n) => namesInImport.add(n));
+          }
+          if (namesInImport.size) {
+            const natureOfLosses = await tx.natureOfLoss.findMany({
+              where: { name: { in: Array.from(namesInImport) } },
+              select: { id: true, name: true },
+            });
+            const natureOfLossIdByName = new Map(
+              natureOfLosses.map((n) => [n.name, n.id]),
+            );
+
+            const perilIdsByNatureOfLossId = new Map<string, Set<string>>();
+            for (const item of itemsToImport) {
+              const perilId = perilIdByItem.get(item);
+              if (!perilId) {
+                continue;
+              }
+              for (const name of item.rowData.natureOfLoss) {
+                const natureOfLossId = natureOfLossIdByName.get(name);
+                if (!natureOfLossId) {
+                  continue;
+                }
+                const set =
+                  perilIdsByNatureOfLossId.get(natureOfLossId) ?? new Set();
+                set.add(perilId);
+                perilIdsByNatureOfLossId.set(natureOfLossId, set);
+              }
+            }
+
+            for (const [
+              natureOfLossId,
+              perilIds,
+            ] of perilIdsByNatureOfLossId.entries()) {
+              await tx.natureOfLoss.update({
+                where: { id: natureOfLossId },
+                data: {
+                  perils: {
+                    connect: Array.from(perilIds).map((id) => ({ id })),
+                  },
+                },
+              });
+            }
+          }
 
           // The same peril can appear more than once in one import (e.g.
           // across sheets) - the last row for a given peril wins.
