@@ -2,7 +2,11 @@ import { Likelihood } from '../utils/likelihood.enum';
 import { Impact } from '../utils/impact.enum';
 import { parseLikelihood } from '../utils/likelihood-parser.util';
 import { parseImpact } from '../utils/impact-parser.util';
-import { getColumnValue, columnExists } from '../utils/row-parser.util';
+import {
+  anyColumnExists,
+  getColumnValue,
+  getFirstColumnValue,
+} from '../utils/row-parser.util';
 
 type LatestPerilLikelihoodRow = {
   Title: string;
@@ -39,18 +43,21 @@ function checkMissingColumns(
   excelRowNumber: number,
 ): string[] {
   const warnings: string[] = [];
+  const euCandidates = [euColumn, 'EU LIKELIHOOD', 'EU'];
+  const usCandidates = [usColumn, 'US LIKELIHOOD', 'US'];
+  const ukCandidates = [ukColumn, 'UK LIKELIHOOD', 'UK'];
 
-  if (!columnExists(row, euColumn)) {
+  if (!anyColumnExists(row, euCandidates)) {
     warnings.push(
       `Column '${euColumn}' not found at sheet '${sheetName}', row ${excelRowNumber}`,
     );
   }
-  if (!columnExists(row, usColumn)) {
+  if (!anyColumnExists(row, usCandidates)) {
     warnings.push(
       `Column '${usColumn}' not found at sheet '${sheetName}', row ${excelRowNumber}`,
     );
   }
-  if (!columnExists(row, ukColumn)) {
+  if (!anyColumnExists(row, ukCandidates)) {
     warnings.push(
       `Column '${ukColumn}' not found at sheet '${sheetName}', row ${excelRowNumber}`,
     );
@@ -72,14 +79,18 @@ function parseLikelihoodValues(
   us: Likelihood;
   uk: Likelihood;
 } {
+  const euCandidates = [euColumn, 'EU LIKELIHOOD', 'EU'];
+  const usCandidates = [usColumn, 'US LIKELIHOOD', 'US'];
+  const ukCandidates = [ukColumn, 'UK LIKELIHOOD', 'UK'];
+
   const euValue =
-    parseLikelihood(getColumnValue(row, euColumn)) ??
+    parseLikelihood(getFirstColumnValue(row, euCandidates)) ??
     Likelihood.HIGHLY_UNLIKELY;
   const usValue =
-    parseLikelihood(getColumnValue(row, usColumn)) ??
+    parseLikelihood(getFirstColumnValue(row, usCandidates)) ??
     Likelihood.HIGHLY_UNLIKELY;
   const ukValue =
-    parseLikelihood(getColumnValue(row, ukColumn)) ??
+    parseLikelihood(getFirstColumnValue(row, ukCandidates)) ??
     Likelihood.HIGHLY_UNLIKELY;
 
   return {

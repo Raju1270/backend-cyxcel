@@ -444,9 +444,6 @@ export class PerilLikelihoodService {
         ]),
       );
 
-      const toCreate = entries.filter(
-        (entry) => !existingByPerilId.has(entry.perilId),
-      );
       const toUpdate = entries.filter((entry) =>
         existingByPerilId.has(entry.perilId),
       );
@@ -480,28 +477,31 @@ export class PerilLikelihoodService {
         };
       });
 
-      const createData = toCreate.map(({ item, perilId }) => ({
-        perilId,
-        eu: item.rowData.eu,
-        us: item.rowData.us,
-        uk: item.rowData.uk,
-        createdAt,
-      }));
-
+      // Upsert on the (perilId, createdAt) unique constraint rather than
+      // branching on the findMany result above: that lookup is only used to
+      // build the history snapshot. The actual write always goes through the
+      // DB's own unique constraint, so even if the lookup above ever misses
+      // an existing row for any reason, this still updates it in place
+      // instead of silently inserting a duplicate row for the same
+      // peril+month.
       await this.prisma.$transaction([
         ...(historyData.length
           ? [this.prisma.perilHistory.createMany({ data: historyData })]
           : []),
-        ...(createData.length
-          ? [this.prisma.perilLikelihood.createMany({ data: createData })]
-          : []),
-        ...toUpdate.map(({ item, perilId }) =>
-          this.prisma.perilLikelihood.update({
-            where: { id: existingByPerilId.get(perilId)?.id },
-            data: {
+        ...entries.map(({ item, perilId }) =>
+          this.prisma.perilLikelihood.upsert({
+            where: { perilId_createdAt: { perilId, createdAt } },
+            update: {
               eu: item.rowData.eu,
               us: item.rowData.us,
               uk: item.rowData.uk,
+            },
+            create: {
+              perilId,
+              eu: item.rowData.eu,
+              us: item.rowData.us,
+              uk: item.rowData.uk,
+              createdAt,
             },
           }),
         ),
@@ -510,7 +510,7 @@ export class PerilLikelihoodService {
       const importedCount = entries.length;
 
       console.log(
-        `${preview.monthAsString} likelihoods: batch-wrote ${createData.length} new and ${toUpdate.length} updated PerilLikelihood record(s)`,
+        `${preview.monthAsString} likelihoods: batch-wrote ${entries.length - toUpdate.length} new and ${toUpdate.length} updated PerilLikelihood record(s)`,
       );
 
       // Verify that records were actually created

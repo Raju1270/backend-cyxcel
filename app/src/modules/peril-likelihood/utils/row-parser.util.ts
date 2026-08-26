@@ -30,6 +30,23 @@ export function getColumnValue(
 }
 
 /**
+ * Helper function to find the first matching column value from a list of candidates.
+ */
+export function getFirstColumnValue(
+  row: LatestPerilLikelihoodRow,
+  columnNames: string[],
+): unknown {
+  for (const columnName of columnNames) {
+    const value = getColumnValue(row, columnName);
+    if (value !== undefined) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+/**
  * Check if column exists in row
  */
 export function columnExists(
@@ -41,6 +58,16 @@ export function columnExists(
   return rowKeys.some(
     (key) => normalizeColumnName(key) === normalizedColumnName,
   );
+}
+
+/**
+ * Check if any column from a list exists in row.
+ */
+export function anyColumnExists(
+  row: LatestPerilLikelihoodRow,
+  columnNames: string[],
+): boolean {
+  return columnNames.some((columnName) => columnExists(row, columnName));
 }
 
 /**

@@ -65,8 +65,8 @@ model PerilLikelihood {
   updatedAt DateTime   @updatedAt
   peril     Peril      @relation(fields: [perilId], references: [id], onDelete: Cascade)
 
+  @@unique([perilId, createdAt])
   @@index([perilId])
-  @@index([perilId, createdAt])
 }
 
 model RiskCategory {

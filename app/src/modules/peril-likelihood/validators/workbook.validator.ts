@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { RiskCategorySlugs } from '../../../common/utils/risk-category-slugs.enum';
-import { normalizeColumnName } from '../utils/row-parser.util';
+import { anyColumnExists } from '../utils/row-parser.util';
 
 type LatestPerilLikelihoodRow = {
   Title: string;
@@ -64,11 +64,7 @@ export function checkColumnInSheet(
 ): boolean {
   if (rows.length === 0) return false;
   const firstRow = rows[0];
-  const rowKeys = Object.keys(firstRow);
-  const normalizedColumnName = normalizeColumnName(columnName);
-  return rowKeys.some(
-    (key) => normalizeColumnName(key) === normalizedColumnName,
-  );
+  return anyColumnExists(firstRow, [columnName]);
 }
 
 /**
@@ -82,20 +78,23 @@ export function validateRequiredColumnsForSheet(
   ukColumn: string,
 ): string[] {
   const warnings: string[] = [];
+  const euCandidates = [euColumn, 'EU LIKELIHOOD', 'EU'];
+  const usCandidates = [usColumn, 'US LIKELIHOOD', 'US'];
+  const ukCandidates = [ukColumn, 'UK LIKELIHOOD', 'UK'];
 
   if (rows.length === 0) return warnings;
 
-  if (!checkColumnInSheet(rows, euColumn)) {
+  if (!anyColumnExists(rows[0], euCandidates)) {
     warnings.push(
       `Required column '${euColumn}' not found in sheet '${sheetName}'`,
     );
   }
-  if (!checkColumnInSheet(rows, usColumn)) {
+  if (!anyColumnExists(rows[0], usCandidates)) {
     warnings.push(
       `Required column '${usColumn}' not found in sheet '${sheetName}'`,
     );
   }
-  if (!checkColumnInSheet(rows, ukColumn)) {
+  if (!anyColumnExists(rows[0], ukCandidates)) {
     warnings.push(
       `Required column '${ukColumn}' not found in sheet '${sheetName}'`,
     );
