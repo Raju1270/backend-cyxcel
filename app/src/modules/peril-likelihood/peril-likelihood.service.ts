@@ -1,4 +1,8 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { ImportLogService } from '../import-log/import-log.service';
 import { PreviewStatus } from '../../common/utils/preview-status.enum';
@@ -24,6 +28,18 @@ type LatestPerilLikelihoodRow = {
   [key: `US ${string}`]: string | number | undefined;
   [key: `UK ${string}`]: string | number | undefined;
 };
+
+function isPrismaConnectionFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return (
+    error.name === 'PrismaClientInitializationError' ||
+    /can't reach database server/i.test(error.message) ||
+    /invalid `this\.prisma\./i.test(error.message)
+  );
+}
 
 @Injectable()
 export class PerilLikelihoodService {
@@ -254,6 +270,12 @@ export class PerilLikelihoodService {
         warnings: globalWarnings.length > 0 ? globalWarnings : undefined,
       };
     } catch (error) {
+      if (isPrismaConnectionFailure(error)) {
+        throw new ServiceUnavailableException(
+          'Database is unavailable for peril likelihood import. Check DATABASE_URL and the Prisma database connection.',
+        );
+      }
+
       if (error instanceof BadRequestException) {
         throw error;
       }
@@ -549,6 +571,12 @@ export class PerilLikelihoodService {
       // Create ImportLog record for failed import
       if (userId && filename) {
         await this.importLogService.createFailedLog(userId, filename, 0);
+      }
+
+      if (isPrismaConnectionFailure(error)) {
+        throw new ServiceUnavailableException(
+          'Database is unavailable for peril likelihood import. Check DATABASE_URL and the Prisma database connection.',
+        );
       }
 
       if (error instanceof BadRequestException) {
