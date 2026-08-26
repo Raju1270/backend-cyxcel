@@ -40,7 +40,7 @@ function validateLossData(
   if (!lossData) {
     return {
       isValid: false,
-      error: `No loss data mapping found for category '${title}' at row ${excelRowNumber}. Supported categories: Cyber, Supply Chain, Regulation, Technology (IT/OT), Corporate Responsibility, Geopolitics, AI Governance`,
+      error: `No loss data mapping found for category '${title}' at row ${excelRowNumber}. Supported categories: Cyber, Supply Chain, Regulation, Technology (IT/OT), Corporate Responsibility, Geopolitics, Artificial Intelligence`,
     };
   }
 

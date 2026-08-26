@@ -1,5 +1,5 @@
 export enum RiskCategorySlugs {
-  AI = 'ai-governance',
+  AI = 'artificial-intelligence',
   CYBER = 'cyber',
   CORPORATE = 'corporate-responsibility',
   GEOPOLITICAL = 'geopolitics',

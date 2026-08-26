@@ -55,7 +55,7 @@ export class RiskCategoriesService {
         throw new BadRequestException(
           `No vertical data found in sheet '${sheetName}'. 
           Expected verticals: Cyber, Supply Chain, Tech (IT/OT), 
-          Corporate Responsibility, Geopolitics, AI Governance.`,
+          Corporate Responsibility, Geopolitics, Artificial Intelligence.`,
         );
       }
 
@@ -100,8 +100,8 @@ export class RiskCategoriesService {
         'Corporate Responsibility vertical': 'Corporate Responsibility',
         'Corporate Responsibility': 'Corporate Responsibility',
         Geopolitics: 'Geopolitics',
-        AI: 'AI Governance',
-        'AI Governance': 'AI Governance',
+        AI: 'Artificial Intelligence',
+        'Artificial Intelligence': 'Artificial Intelligence',
       };
 
       // Process each vertical

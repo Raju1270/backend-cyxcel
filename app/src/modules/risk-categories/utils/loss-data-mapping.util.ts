@@ -326,8 +326,9 @@ export function convertParsedDataToLossData(
       data: dataArray,
     };
   } else if (
-    normalizedVertical.includes('ai') ||
-    normalizedVertical.includes('governance')
+    normalizedVertical.includes('artificial') ||
+    normalizedVertical.includes('intelligence') ||
+    normalizedVertical.includes('ai')
   ) {
     const dataArray: any[] = [];
     data.forEach((item) => {
@@ -394,7 +395,7 @@ export function getLossDataForCategory(title: string): LossData | null {
     return corporateResponsibility;
   } else if (normalizedTitle === 'Geopolitics') {
     return geopolitics;
-  } else if (normalizedTitle === 'AI Governance') {
+  } else if (normalizedTitle === 'Artificial Intelligence') {
     return ai;
   }
 

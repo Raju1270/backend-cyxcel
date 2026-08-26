@@ -25,7 +25,7 @@ export class ImportPreviewResponseDto<T = any> {
     type: [String],
     description: 'Global warnings about missing sheets or required columns',
     example: [
-      "Sheet 'ai-governance' not found in workbook",
+      "Sheet 'artificial-intelligence' not found in workbook",
       "Required column 'EU JANUARY 2025' not found in sheet 'cyber'",
     ],
     required: false,

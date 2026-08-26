@@ -79,6 +79,12 @@ function matchesVerticalPattern(cellValue: string): string | null {
   ) {
     return 'Geopolitics';
   }
+  if (
+    normalized.includes('artificial') &&
+    normalized.includes('intelligence')
+  ) {
+    return 'Artificial Intelligence';
+  }
   if (normalized.includes('ai') && !normalized.includes('governance')) {
     return 'AI';
   }
