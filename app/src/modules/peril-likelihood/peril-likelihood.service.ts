@@ -366,20 +366,29 @@ export class PerilLikelihoodService {
     const perilIdBySlug = new Map(createdPerils.map((p) => [p.slug, p.id]));
 
     // Connect each newly-resolved peril to its sheet's risk category.
-    // Sequential awaits on `tx` (NOT Promise.all) - inside a transaction,
-    // Prisma serializes work on one connection anyway, so firing these
-    // concurrently just queues up on the same connection with no benefit,
-    // and doing it outside a transaction (as before) was what opened N
-    // concurrent connections and exhausted the production pool.
+    // Grouped by sheet/risk-category and connected with ONE update per
+    // distinct sheet (not one per peril) - a `connect` array accepts many
+    // ids in a single query. With ~100 new perils across, say, 6 sheets,
+    // that's 6 round trips instead of 100, which is what was blowing past
+    // the transaction timeout on a large first-time (empty-DB) import.
+    const perilIdsBySheet = new Map<string, string[]>();
     for (const [slug, item] of uniqueNewPerils.entries()) {
-      const riskCategory = riskCategoryBySlug.get(item._data.sheetName);
       const perilId = perilIdBySlug.get(slug);
-      if (!riskCategory || !perilId) {
+      if (!perilId) {
         continue;
       }
-      await tx.peril.update({
-        where: { id: perilId },
-        data: { riskCategories: { connect: { id: riskCategory.id } } },
+      const list = perilIdsBySheet.get(item._data.sheetName) ?? [];
+      list.push(perilId);
+      perilIdsBySheet.set(item._data.sheetName, list);
+    }
+    for (const [sheetName, perilIds] of perilIdsBySheet.entries()) {
+      const riskCategory = riskCategoryBySlug.get(sheetName);
+      if (!riskCategory) {
+        continue;
+      }
+      await tx.riskCategory.update({
+        where: { id: riskCategory.id },
+        data: { perils: { connect: perilIds.map((id) => ({ id })) } },
       });
     }
 
@@ -529,31 +538,48 @@ export class PerilLikelihoodService {
             await tx.perilHistory.createMany({ data: historyData });
           }
 
-          // Upsert on the (perilId, createdAt) unique constraint rather
-          // than branching on the findMany result above: that lookup is
-          // only used to build the history snapshot. The actual write
-          // always goes through the DB's own unique constraint.
-          for (const { item, perilId } of entries) {
-            await tx.perilLikelihood.upsert({
-              where: { perilId_createdAt: { perilId, createdAt } },
-              update: {
-                eu: item.rowData.eu,
-                us: item.rowData.us,
-                uk: item.rowData.uk,
-              },
-              create: {
+          // Split into creates vs. updates using the existingByPerilId
+          // lookup we already have (no extra query). On a first-time
+          // (empty-DB) import basically everything is a create, so this
+          // collapses hundreds of individual round trips into ONE
+          // createMany call. Only genuine overwrites - which is normally a
+          // much smaller set - still go through a per-row upsert, since
+          // each one needs its own eu/us/uk values and createMany can't
+          // update existing rows.
+          const toCreateEntries = entries.filter(
+            (entry) => !existingByPerilId.has(entry.perilId),
+          );
+          const toUpdateEntries = entries.filter((entry) =>
+            existingByPerilId.has(entry.perilId),
+          );
+
+          if (toCreateEntries.length) {
+            await tx.perilLikelihood.createMany({
+              data: toCreateEntries.map(({ item, perilId }) => ({
                 perilId,
                 eu: item.rowData.eu,
                 us: item.rowData.us,
                 uk: item.rowData.uk,
                 createdAt,
+              })),
+              skipDuplicates: true,
+            });
+          }
+
+          for (const { item, perilId } of toUpdateEntries) {
+            await tx.perilLikelihood.update({
+              where: { perilId_createdAt: { perilId, createdAt } },
+              data: {
+                eu: item.rowData.eu,
+                us: item.rowData.us,
+                uk: item.rowData.uk,
               },
             });
           }
 
           importedCount = entries.length;
         },
-        { timeout: 30_000 },
+        { timeout: 60_000 },
       );
 
       console.log(
