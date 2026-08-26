@@ -37,6 +37,20 @@ type LatestPerilLikelihoodRow = {
 // row is a "new peril" and used to fire off concurrent connections.
 type Tx = Prisma.TransactionClient;
 
+// Workbook sheet names are expected to match RiskCategory.slug, but a slug
+// can get renamed in the DB after the workbook template is already in
+// circulation (e.g. 'ai-governance' -> 'artificial-intelligence'). Without
+// this, a renamed sheet's new perils silently fail to link to any risk
+// category - no error, just a missing relation. Add an entry here whenever
+// a risk category slug changes.
+const SHEET_TO_RISK_CATEGORY_SLUG: Record<string, string> = {
+  'ai-governance': 'artificial-intelligence',
+};
+
+function resolveRiskCategorySlug(sheetName: string): string {
+  return SHEET_TO_RISK_CATEGORY_SLUG[sheetName] ?? sheetName;
+}
+
 function isPrismaConnectionFailure(error: unknown): boolean {
   if (!(error instanceof Error)) {
     return false;
@@ -370,7 +384,11 @@ export class PerilLikelihoodService {
     }
 
     const sheetSlugs = Array.from(
-      new Set(newPerilItems.map((item) => item._data.sheetName)),
+      new Set(
+        newPerilItems.map((item) =>
+          resolveRiskCategorySlug(item._data.sheetName),
+        ),
+      ),
     );
     const riskCategories = await tx.riskCategory.findMany({
       where: { slug: { in: sheetSlugs } },
@@ -415,7 +433,9 @@ export class PerilLikelihoodService {
       perilIdsBySheet.set(item._data.sheetName, list);
     }
     for (const [sheetName, perilIds] of perilIdsBySheet.entries()) {
-      const riskCategory = riskCategoryBySlug.get(sheetName);
+      const riskCategory = riskCategoryBySlug.get(
+        resolveRiskCategorySlug(sheetName),
+      );
       if (!riskCategory) {
         continue;
       }
