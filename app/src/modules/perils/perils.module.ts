@@ -5,11 +5,13 @@ import {
   NatureOfLossController,
   PerilsController,
   RiskCategoriesController,
+  SectorsController,
 } from './perils.controller';
 import {
   NatureOfLossService,
   PerilsService,
   RiskCategoriesService,
+  SectorsService,
 } from './perils.service';
 
 @Module({
@@ -18,8 +20,19 @@ import {
     PerilsController,
     RiskCategoriesController,
     NatureOfLossController,
+    SectorsController,
   ],
-  providers: [PerilsService, RiskCategoriesService, NatureOfLossService],
-  exports: [PerilsService, RiskCategoriesService, NatureOfLossService],
+  providers: [
+    PerilsService,
+    RiskCategoriesService,
+    NatureOfLossService,
+    SectorsService,
+  ],
+  exports: [
+    PerilsService,
+    RiskCategoriesService,
+    NatureOfLossService,
+    SectorsService,
+  ],
 })
 export class PerilsModule {}

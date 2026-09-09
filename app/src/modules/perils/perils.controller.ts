@@ -27,7 +27,11 @@ import { PerilsQueryDto } from './dto/perils-query.dto';
 import { UpdatePerilDto } from './dto/update-peril.dto';
 import { PerilsService } from './perils.service';
 
-import { NatureOfLossService, RiskCategoriesService } from './perils.service';
+import {
+  NatureOfLossService,
+  RiskCategoriesService,
+  SectorsService,
+} from './perils.service';
 
 @ApiTag('perils')
 @Controller('perils')
@@ -42,7 +46,7 @@ export class PerilsController {
   @ApiOperation({
     summary: 'Get perils',
     description:
-      'Retrieves a paginated list of perils. Supports optional filtering by riskCategoryId, impact, region, search across name/description, ordering, and including soft-deleted records (excluded by default).',
+      'Retrieves a paginated list of perils. Supports optional filtering by riskCategoryId, sectorId, impact, region, search across name/description, ordering, and including soft-deleted records (excluded by default).',
   })
   @ApiOkResponse({
     description: 'Returns paginated perils',
@@ -89,6 +93,17 @@ export class PerilsController {
                   },
                 },
               },
+              sectors: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    id: { type: 'string' },
+                    name: { type: 'string' },
+                    role: { type: 'string' },
+                  },
+                },
+              },
               likelihood: {
                 type: 'object',
                 nullable: true,
@@ -98,6 +113,19 @@ export class PerilsController {
                   eu: { type: 'string' },
                   us: { type: 'string' },
                   uk: { type: 'string' },
+                  createdAt: { type: 'string', format: 'date-time' },
+                  updatedAt: { type: 'string', format: 'date-time' },
+                },
+              },
+              control: {
+                type: 'object',
+                nullable: true,
+                description:
+                  'The single control mapped to this peril, if one has been set.',
+                properties: {
+                  id: { type: 'string' },
+                  question: { type: 'string' },
+                  source: { type: 'string' },
                   createdAt: { type: 'string', format: 'date-time' },
                   updatedAt: { type: 'string', format: 'date-time' },
                 },
@@ -278,5 +306,40 @@ export class NatureOfLossController {
   async findAll(): Promise<any[]> {
     this.logger.log('GET /nature-of-loss called');
     return this.natureOfLossService.findAll();
+  }
+}
+
+@ApiTag('sectors')
+@Controller('sectors')
+@UseGuards(ClerkAuthGuard)
+export class SectorsController {
+  private readonly logger = new Logger(SectorsController.name);
+
+  constructor(private readonly sectorsService: SectorsService) {}
+
+  @Get()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get sectors',
+    description:
+      'Returns all sectors (id, name, role), sorted by name — for filters/selects, and for mapping which sectors a peril affects.',
+  })
+  @ApiOkResponse({
+    description: 'Returns sectors',
+    schema: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          name: { type: 'string' },
+          role: { type: 'string' },
+        },
+      },
+    },
+  })
+  async findAll(): Promise<{ id: string; name: string; role: string }[]> {
+    this.logger.log('GET /sectors called');
+    return this.sectorsService.findAll();
   }
 }

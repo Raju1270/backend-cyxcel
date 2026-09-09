@@ -24,12 +24,32 @@ const NATURE_OF_LOSS_SELECT = {
   name: true,
 } satisfies Prisma.NatureOfLossSelect;
 
+const SECTOR_SELECT = {
+  id: true,
+  name: true,
+  role: true,
+} satisfies Prisma.SectorSelect;
+
+const CONTROL_SELECT = {
+  id: true,
+  question: true,
+  source: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.ControlSelect;
+
 const PERIL_INCLUDE = {
   riskCategories: {
     select: RISK_CATEGORY_SELECT,
   },
   natureOfLosses: {
     select: NATURE_OF_LOSS_SELECT,
+  },
+  sectors: {
+    select: SECTOR_SELECT,
+  },
+  control: {
+    select: CONTROL_SELECT,
   },
 } satisfies Prisma.PerilInclude;
 
@@ -45,6 +65,11 @@ interface LikelihoodTriad {
   euLikelihood?: Likelihood;
   usLikelihood?: Likelihood;
   ukLikelihood?: Likelihood;
+}
+
+interface ControlPair {
+  controlQuestion?: string;
+  controlSource?: string;
 }
 
 interface LikelihoodSummary {
@@ -87,6 +112,12 @@ export class PerilsService {
     if (query.riskCategoryId) {
       where.riskCategories = {
         some: { id: query.riskCategoryId },
+      };
+    }
+
+    if (query.sectorId) {
+      where.sectors = {
+        some: { id: query.sectorId },
       };
     }
 
@@ -220,6 +251,25 @@ export class PerilsService {
     return [euLikelihood, usLikelihood, ukLikelihood];
   }
 
+  private validateControlPair(dto: ControlPair): [string, string] | null {
+    const { controlQuestion, controlSource } = dto;
+    const providedCount = [controlQuestion, controlSource].filter(
+      (v) => v !== undefined,
+    ).length;
+
+    if (providedCount === 0) {
+      return null;
+    }
+
+    if (providedCount !== 2 || !controlQuestion || !controlSource) {
+      throw new BadRequestException(
+        'controlQuestion and controlSource must both be provided together',
+      );
+    }
+
+    return [controlQuestion, controlSource];
+  }
+
   private async generateUniqueSlug(
     name: string,
     excludeId?: string,
@@ -249,6 +299,7 @@ export class PerilsService {
   async create(dto: CreatePerilDto): Promise<any> {
     const slug = await this.generateUniqueSlug(dto.name);
     const triad = this.validateLikelihoodTriad(dto);
+    const controlPair = this.validateControlPair(dto);
 
     const created = await this.prisma.$transaction(async (tx) => {
       const peril = await tx.peril.create({
@@ -269,6 +320,23 @@ export class PerilsService {
             ? {
                 natureOfLosses: {
                   connect: dto.natureOfLossIds.map((id) => ({ id })),
+                },
+              }
+            : {}),
+          ...(dto.sectorIds
+            ? {
+                sectors: {
+                  connect: dto.sectorIds.map((id) => ({ id })),
+                },
+              }
+            : {}),
+          ...(controlPair
+            ? {
+                control: {
+                  create: {
+                    question: controlPair[0],
+                    source: controlPair[1],
+                  },
                 },
               }
             : {}),
@@ -310,6 +378,7 @@ export class PerilsService {
         : undefined;
 
     const triad = this.validateLikelihoodTriad(dto);
+    const controlPair = this.validateControlPair(dto);
 
     const updated = await this.prisma.$transaction(async (tx) => {
       if (triad) {
@@ -362,6 +431,29 @@ export class PerilsService {
                 },
               }
             : {}),
+          ...(dto.sectorIds !== undefined
+            ? {
+                sectors: {
+                  set: dto.sectorIds.map((sectorId) => ({ id: sectorId })),
+                },
+              }
+            : {}),
+          ...(controlPair
+            ? {
+                control: {
+                  upsert: {
+                    create: {
+                      question: controlPair[0],
+                      source: controlPair[1],
+                    },
+                    update: {
+                      question: controlPair[0],
+                      source: controlPair[1],
+                    },
+                  },
+                },
+              }
+            : {}),
         },
         include: PERIL_INCLUDE,
       });
@@ -405,6 +497,18 @@ export class RiskCategoriesService {
   async findAll() {
     return this.prisma.riskCategory.findMany({
       select: { id: true, slug: true, name: true },
+      orderBy: { name: 'asc' },
+    });
+  }
+}
+
+@Injectable()
+export class SectorsService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async findAll() {
+    return this.prisma.sector.findMany({
+      select: SECTOR_SELECT,
       orderBy: { name: 'asc' },
     });
   }

@@ -14,6 +14,14 @@ export class PerilsQueryDto extends PaginationQueryDto {
   riskCategoryId?: string;
 
   @ApiPropertyOptional({
+    description: 'Filter by sector ID',
+    example: '123e4567-e89b-12d3-a456-426614174000',
+  })
+  @IsString()
+  @IsOptional()
+  sectorId?: string;
+
+  @ApiPropertyOptional({
     description: 'Filter by impact rating',
     enum: Impact,
   })

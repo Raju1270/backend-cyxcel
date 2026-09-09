@@ -9,31 +9,45 @@ datasource db {
 }
 
 model Peril {
-  id                   String                    @id @default(uuid())
-  name                 String
-  slug                 String                    @unique
-  description          String
-  impact               Impact?
-  createdAt            DateTime                  @default(now())
-  updatedAt            DateTime                  @updatedAt
-  deletedAt            DateTime?
-  region               Region[]
-  likelihoods          PerilLikelihood[]
-  organizationRatings  OrganizationPerilRating[]
-  customRiskCategories CustomRiskCategory[]      @relation("CustomPerils")
-  natureOfLosses       NatureOfLoss[]            @relation("NatureOfLossToPeril")
-  riskCategories       RiskCategory[]            @relation("PerilToRiskCategory")
-  ratingHistory        OrganizationPerilRatingHistory[]
-  perilHistory         PerilHistory[]
+  id                        String                           @id @default(uuid())
+  name                      String
+  slug                      String                           @unique
+  description               String
+  impact                    Impact?
+  createdAt                 DateTime                         @default(now())
+  updatedAt                 DateTime                         @updatedAt
+  deletedAt                 DateTime?
+  region                    Region[]
+  likelihoods               PerilLikelihood[]
+  organizationRatings       OrganizationPerilRating[]
+  customRiskCategories      CustomRiskCategory[]             @relation("CustomPerils")
+  natureOfLosses            NatureOfLoss[]                   @relation("NatureOfLossToPeril")
+  riskCategories            RiskCategory[]                   @relation("PerilToRiskCategory")
+  sectors                   Sector[]                         @relation("PerilToSector")
+  control                   Control?
+  ratingHistory             OrganizationPerilRatingHistory[]
+  perilHistory              PerilHistory[]
+  organizationSectorSources OrganizationPerilSector[]
 
   @@index([deletedAt])
 }
 
-model PerilHistory {
-  id        String @id @default(uuid())
-  perilId   String
+model Control {
+  id        String   @id @default(uuid())
+  question  String
+  source    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  impact   Impact?
+  perilId String @unique
+  peril   Peril  @relation(fields: [perilId], references: [id], onDelete: Cascade)
+}
+
+model PerilHistory {
+  id      String @id @default(uuid())
+  perilId String
+
+  impact Impact?
 
   eu Likelihood?
   us Likelihood?
@@ -95,6 +109,44 @@ model Sector {
   createdAt DateTime         @default(now())
   updatedAt DateTime         @updatedAt
   exposures SectorExposure[]
+  perils    Peril[]          @relation("PerilToSector")
+
+  organizations            OrganizationSector[]
+  organizationPerilSources OrganizationPerilSector[]
+}
+
+// ORGANIZATION ↔ SECTOR MAPPING ("ABC CORP WORKS IN THESE SECTORS").
+model OrganizationSector {
+  id             String   @id @default(uuid())
+  organizationId String
+  sectorId       String
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  sector       Sector       @relation(fields: [sectorId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, sectorId])
+  @@index([organizationId])
+  @@index([sectorId])
+}
+
+// PROVENANCE: RECORDS WHICH SECTOR(S) CAUSED AN OrganizationPerilRating TO BE
+// AUTO-ACTIVATED, SO A SECTOR REMOVAL CAN SAFELY DEACTIVATE ONLY PERILS NO
+// LONGER JUSTIFIED BY ANY REMAINING SECTOR (SEE OrganizationPerilRating.manuallyActivated).
+model OrganizationPerilSector {
+  id             String   @id @default(uuid())
+  organizationId String
+  perilId        String
+  sectorId       String
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  peril        Peril        @relation(fields: [perilId], references: [id], onDelete: Cascade)
+  sector       Sector       @relation(fields: [sectorId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, perilId, sectorId])
+  @@index([organizationId, perilId])
+  @@index([sectorId])
 }
 
 model SectorExposure {
@@ -135,22 +187,22 @@ model RiskOwner {
 }
 
 model User {
-  id                   String               @id @default(uuid())
-  clerkId              String               @unique
-  email                String               @unique
+  id                   String                           @id @default(uuid())
+  clerkId              String                           @unique
+  email                String                           @unique
   name                 String
   designation          String?
-  settingsId           String               @unique
-  createdAt            DateTime             @default(now())
-  updatedAt            DateTime             @updatedAt
+  settingsId           String                           @unique
+  createdAt            DateTime                         @default(now())
+  updatedAt            DateTime                         @updatedAt
   customRiskCategories CustomRiskCategory[]
   importLogs           ImportLog[]
   memberships          Membership[]
   reports              Report[]
-  settings             UserSettings         @relation(fields: [settingsId], references: [id], onDelete: Cascade)
-  perilRatings        OrganizationPerilRating[]        @relation("OrganizationPerilRatingUpdatedBy")
-  perilRatingHistory  OrganizationPerilRatingHistory[] @relation("OrganizationPerilRatingHistoryUpdatedBy")
-  perilHistory        PerilHistory[]                   @relation("PerilLikelihoodHistoryUpdatedBy")
+  settings             UserSettings                     @relation(fields: [settingsId], references: [id], onDelete: Cascade)
+  perilRatings         OrganizationPerilRating[]        @relation("OrganizationPerilRatingUpdatedBy")
+  perilRatingHistory   OrganizationPerilRatingHistory[] @relation("OrganizationPerilRatingHistoryUpdatedBy")
+  perilHistory         PerilHistory[]                   @relation("PerilLikelihoodHistoryUpdatedBy")
 }
 
 model UserSettings {
@@ -175,11 +227,14 @@ model Report {
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   completedAt    DateTime?
+  deletedAt      DateTime?
   exposureScore  Float?
   maturityScore  Float?
   residualRisk   Float?
   riskCategory   RiskCategory @relation(fields: [riskCategoryId], references: [id])
   user           User         @relation(fields: [userId], references: [id])
+
+  @@index([deletedAt])
 }
 
 model ThoughtLeadership {
@@ -238,17 +293,17 @@ model Service {
 }
 
 model CustomRiskCategory {
-  id        String   @id @default(uuid())
-  userId    String
-  organizationId String?
-  name      String
-  slug      String   @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id               String        @id @default(uuid())
+  userId           String
+  organizationId   String?
+  name             String
+  slug             String        @unique
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
   riskCategorySlug String?
-  user      User     @relation(fields: [userId], references: [id])
-  organization Organization? @relation(fields: [organizationId], references: [id])
-  perils    Peril[]  @relation("CustomPerils")
+  user             User          @relation(fields: [userId], references: [id])
+  organization     Organization? @relation(fields: [organizationId], references: [id])
+  perils           Peril[]       @relation("CustomPerils")
 }
 
 model ImportLog {
@@ -265,8 +320,6 @@ model ImportLog {
 model Organization {
   id        String   @id
   name      String
-  plan      Plan?    @default(basic)
-  seat      Int?     @default(0)
   regions   Region[] @default([EU, US, UK])
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -275,6 +328,8 @@ model Organization {
   perilRatings         OrganizationPerilRating[]
   perilRatingHistory   OrganizationPerilRatingHistory[]
   customRiskCategories CustomRiskCategory[]
+  sectors              OrganizationSector[]
+  perilSectorSources   OrganizationPerilSector[]
 }
 
 model Membership {
@@ -302,7 +357,11 @@ model OrganizationPerilRating {
 
   comments String?
 
-  isActive    Boolean  @default(true)
+  isActive          Boolean @default(true)
+  // TRUE WHEN THE LAST isActive CHANGE CAME FROM A MANUAL ACTION (CONFIGURE PERIL /
+  // CREATE MY PERILS), NOT FROM SECTOR-DRIVEN AUTO-ACTIVATION. SECTOR REMOVAL MUST
+  // NOT DEACTIVATE A PERIL WHILE THIS IS TRUE (SEE OrganizationPerilSector).
+  manuallyActivated Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -334,7 +393,7 @@ model OrganizationPerilRatingHistory {
 
   updatedById String?
   // TRACKS WHO MADE THE RATING CHANGE.
-  updatedBy User? @relation("OrganizationPerilRatingHistoryUpdatedBy", fields: [updatedById], references: [id])
+  updatedBy   User?   @relation("OrganizationPerilRatingHistoryUpdatedBy", fields: [updatedById], references: [id])
 
   // TIMESTAMPS FROM THE CURRENT RECORD.
   ratingCreatedAt DateTime
@@ -405,10 +464,4 @@ enum OrgRole {
   cxo
   user
   unassign
-}
-
-enum Plan {
-  basic
-  pro
-  enterprise
 }

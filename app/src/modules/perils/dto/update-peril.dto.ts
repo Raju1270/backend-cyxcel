@@ -67,6 +67,17 @@ export class UpdatePerilDto {
   natureOfLossIds?: string[];
 
   @ApiPropertyOptional({
+    description: 'Sector IDs this peril affects',
+    type: [String],
+    example: ['123e4567-e89b-12d3-a456-426614174000'],
+  })
+  @IsArray()
+  @ArrayUnique()
+  @IsString({ each: true })
+  @IsOptional()
+  sectorIds?: string[];
+
+  @ApiPropertyOptional({
     description:
       'EU likelihood rating. Must be provided together with usLikelihood and ukLikelihood. Saving any of these creates a new dated likelihood record and archives the previous one to history, mirroring the peril-likelihood Excel import.',
     enum: Likelihood,
@@ -92,4 +103,22 @@ export class UpdatePerilDto {
   @IsEnum(Likelihood)
   @IsOptional()
   ukLikelihood?: Likelihood;
+
+  @ApiPropertyOptional({
+    description:
+      'Control question. Must be provided together with controlSource. Whitespace/line breaks are preserved as-is.',
+    example: 'Is multi-factor authentication enforced for all privileged accounts?',
+  })
+  @IsString()
+  @IsOptional()
+  controlQuestion?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Source/reference for the control question. Must be provided together with controlQuestion.',
+    example: 'ISO 27001 A.5.17',
+  })
+  @IsString()
+  @IsOptional()
+  controlSource?: string;
 }
