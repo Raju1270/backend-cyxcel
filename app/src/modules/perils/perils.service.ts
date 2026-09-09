@@ -90,6 +90,17 @@ function withLikelihood<T extends { id: string }>(
   };
 }
 
+// SAME "2ND OF THE MONTH, UTC" CONVENTION THE PERIL-LIKELIHOOD EXCEL IMPORT USES
+// (`new Date(\`${year}-${month}-02\`)`, WHICH THE JS SPEC PARSES AS UTC MIDNIGHT).
+// USING THE SAME DATE HERE MEANS A MANUAL EDIT AND THAT MONTH'S EXCEL IMPORT
+// LAND ON THE SAME PerilLikelihood ROW INSTEAD OF EACH CREATING THEIR OWN.
+function getCurrentMonthSnapshotDate(): Date {
+  const now = new Date();
+  const year = now.getUTCFullYear();
+  const month = String(now.getUTCMonth() + 1).padStart(2, '0');
+  return new Date(`${year}-${month}-02`);
+}
+
 @Injectable()
 export class PerilsService {
   private readonly logger = new Logger(PerilsService.name);
@@ -382,28 +393,39 @@ export class PerilsService {
 
     const updated = await this.prisma.$transaction(async (tx) => {
       if (triad) {
-        const prevLikelihood = await tx.perilLikelihood.findFirst({
-          where: { perilId: id },
-          orderBy: { createdAt: 'desc' },
+        const snapshotDate = getCurrentMonthSnapshotDate();
+        const currentMonthLikelihood = await tx.perilLikelihood.findUnique({
+          where: { perilId_createdAt: { perilId: id, createdAt: snapshotDate } },
         });
 
-        // Snapshot the pre-update state to history, mirroring the
-        // peril-likelihood Excel import's behavior on each new data point.
-        await tx.perilHistory.create({
-          data: {
-            perilId: id,
-            impact: existing.impact,
-            eu: prevLikelihood?.eu ?? null,
-            us: prevLikelihood?.us ?? null,
-            uk: prevLikelihood?.uk ?? null,
-            likelihoodCreatedAt: prevLikelihood?.createdAt ?? new Date(),
-            likelihoodUpdatedAt: prevLikelihood?.updatedAt ?? new Date(),
-          },
-        });
+        // ONLY SNAPSHOT HISTORY ON THE FIRST EDIT OF THE MONTH - A SECOND EDIT
+        // WITHIN THE SAME MONTH IS A CORRECTION TO THIS MONTH'S OWN VALUE, NOT
+        // A NEW MONTH, SO IT SHOULD OVERWRITE RATHER THAN STACK ANOTHER
+        // HISTORY ENTRY (MIRRORS THE EXCEL IMPORT'S "RE-IMPORTS SKIP" RULE).
+        if (!currentMonthLikelihood) {
+          const prevLikelihood = await tx.perilLikelihood.findFirst({
+            where: { perilId: id },
+            orderBy: { createdAt: 'desc' },
+          });
+
+          await tx.perilHistory.create({
+            data: {
+              perilId: id,
+              impact: existing.impact,
+              eu: prevLikelihood?.eu ?? null,
+              us: prevLikelihood?.us ?? null,
+              uk: prevLikelihood?.uk ?? null,
+              likelihoodCreatedAt: prevLikelihood?.createdAt ?? new Date(),
+              likelihoodUpdatedAt: prevLikelihood?.updatedAt ?? new Date(),
+            },
+          });
+        }
 
         const [eu, us, uk] = triad;
-        await tx.perilLikelihood.create({
-          data: { perilId: id, eu, us, uk },
+        await tx.perilLikelihood.upsert({
+          where: { perilId_createdAt: { perilId: id, createdAt: snapshotDate } },
+          create: { perilId: id, eu, us, uk, createdAt: snapshotDate },
+          update: { eu, us, uk },
         });
       }
 
