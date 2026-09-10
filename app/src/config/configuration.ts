@@ -52,6 +52,9 @@ export default () => ({
   clerk: {
     secretKey: process.env.CLERK_SECRET_KEY ?? '',
   },
+  cron: {
+    secret: process.env.CRON_SECRET ?? '',
+  },
   cors: {
     origins: process.env.CORS_ORIGINS
       ? process.env.CORS_ORIGINS.split(',')

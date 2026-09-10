@@ -7,6 +7,12 @@
   },
   "rewrites": [
     { "source": "/(.*)", "destination": "/api/[...all]" }
+  ],
+  "crons": [
+    {
+      "path": "/api/v1/cron/carry-forward-likelihoods",
+      "schedule": "0 0 1 * *"
+    }
   ]
 }
 

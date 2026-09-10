@@ -7,6 +7,7 @@ import {
 import { Likelihood, Prisma } from '@prisma/client';
 import { PaginationMeta } from '../../common/dto/pagination-query.dto';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { getCurrentMonthSnapshotDate } from '../../common/utils/peril-likelihood-date.util';
 import { slugify } from '../../common/utils/slugify.util';
 import { CreatePerilDto } from './dto/create-peril.dto';
 import { PerilsQueryDto } from './dto/perils-query.dto';
@@ -88,17 +89,6 @@ function withLikelihood<T extends { id: string }>(
     ...peril,
     likelihood: likelihoodByPerilId.get(peril.id) ?? null,
   };
-}
-
-// SAME "2ND OF THE MONTH, UTC" CONVENTION THE PERIL-LIKELIHOOD EXCEL IMPORT USES
-// (`new Date(\`${year}-${month}-02\`)`, WHICH THE JS SPEC PARSES AS UTC MIDNIGHT).
-// USING THE SAME DATE HERE MEANS A MANUAL EDIT AND THAT MONTH'S EXCEL IMPORT
-// LAND ON THE SAME PerilLikelihood ROW INSTEAD OF EACH CREATING THEIR OWN.
-function getCurrentMonthSnapshotDate(): Date {
-  const now = new Date();
-  const year = now.getUTCFullYear();
-  const month = String(now.getUTCMonth() + 1).padStart(2, '0');
-  return new Date(`${year}-${month}-02`);
 }
 
 @Injectable()
@@ -395,7 +385,9 @@ export class PerilsService {
       if (triad) {
         const snapshotDate = getCurrentMonthSnapshotDate();
         const currentMonthLikelihood = await tx.perilLikelihood.findUnique({
-          where: { perilId_createdAt: { perilId: id, createdAt: snapshotDate } },
+          where: {
+            perilId_createdAt: { perilId: id, createdAt: snapshotDate },
+          },
         });
 
         // ONLY SNAPSHOT HISTORY ON THE FIRST EDIT OF THE MONTH - A SECOND EDIT
@@ -423,7 +415,9 @@ export class PerilsService {
 
         const [eu, us, uk] = triad;
         await tx.perilLikelihood.upsert({
-          where: { perilId_createdAt: { perilId: id, createdAt: snapshotDate } },
+          where: {
+            perilId_createdAt: { perilId: id, createdAt: snapshotDate },
+          },
           create: { perilId: id, eu, us, uk, createdAt: snapshotDate },
           update: { eu, us, uk },
         });

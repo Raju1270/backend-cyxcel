@@ -13,6 +13,7 @@ import { ImportLogModule } from './modules/import-log/import-log.module';
 import { QuestionsModule } from './modules/questions/questions.module';
 import { ThoughtLeadershipModule } from './modules/thought-leadership/thought-leadership.module';
 import { PerilsModule } from './modules/perils/perils.module';
+import { CronModule } from './modules/cron/cron.module';
 import { PostmanModule } from './modules/postman/postman.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { ServeStaticModule } from '@nestjs/serve-static';
@@ -50,6 +51,7 @@ const isProduction = nodeEnv === 'production';
     QuestionsModule,
     ThoughtLeadershipModule,
     PerilsModule,
+    CronModule,
     // Postman module is only available in non-production environments
     ...(isProduction ? [] : [PostmanModule]),
   ],

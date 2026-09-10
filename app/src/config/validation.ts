@@ -68,4 +68,12 @@ export const validationSchema = Joi.object({
     then: Joi.string().required(),
     otherwise: Joi.string().allow('').default(''),
   }),
+
+  // Vercel Cron - required in production so a cron route can never be left
+  // unprotected by a missing env var.
+  CRON_SECRET: Joi.string().when('NODE_ENV', {
+    is: 'production',
+    then: Joi.string().required(),
+    otherwise: Joi.string().allow('').default(''),
+  }),
 });
