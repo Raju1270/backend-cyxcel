@@ -27,7 +27,8 @@ export class CreatePerilDto {
   description: string;
 
   @ApiPropertyOptional({
-    description: 'Impact rating',
+    description:
+      "Severity rating for the peril's first month. Must be provided together with euLikelihood, usLikelihood, and ukLikelihood - severity is recorded per month in the same PerilLikelihood row as the rest of the rating.",
     enum: Impact,
   })
   @IsEnum(Impact)
@@ -108,7 +109,8 @@ export class CreatePerilDto {
   @ApiPropertyOptional({
     description:
       'Control question. Must be provided together with controlSource. Whitespace/line breaks are preserved as-is.',
-    example: 'Is multi-factor authentication enforced for all privileged accounts?',
+    example:
+      'Is multi-factor authentication enforced for all privileged accounts?',
   })
   @IsString()
   @IsOptional()

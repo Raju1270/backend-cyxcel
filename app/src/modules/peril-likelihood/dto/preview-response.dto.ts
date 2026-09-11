@@ -50,7 +50,7 @@ export class PerilLikelihoodRowData {
     required: false,
     nullable: true,
     description:
-      'Peril impact read from the "Impact of Peril" / "Impact" column - only used when creating a new peril',
+      'Peril impact read from the "Impact of Peril" / "Impact" column. Used both when creating a new peril and, since severity is now recorded per PerilLikelihood month like eu/us/uk, when importing/correcting an existing month\'s row - falls back to the peril\'s current impact when this column is blank.',
   })
   impact?: Impact | null;
 

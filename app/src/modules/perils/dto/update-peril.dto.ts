@@ -6,6 +6,7 @@ import {
   IsEnum,
   IsOptional,
   IsString,
+  Matches,
 } from 'class-validator';
 
 export class UpdatePerilDto {
@@ -26,7 +27,8 @@ export class UpdatePerilDto {
   description?: string;
 
   @ApiPropertyOptional({
-    description: 'Impact rating',
+    description:
+      'Severity rating for ratingMonth (or the current month by default). Must be provided together with euLikelihood, usLikelihood, and ukLikelihood - severity is recorded per month in the same PerilLikelihood row as the rest of the rating, not as an independent always-current value.',
     enum: Impact,
   })
   @IsEnum(Impact)
@@ -79,7 +81,19 @@ export class UpdatePerilDto {
 
   @ApiPropertyOptional({
     description:
-      'EU likelihood rating. Must be provided together with usLikelihood and ukLikelihood. Saving any of these creates a new dated likelihood record and archives the previous one to history, mirroring the peril-likelihood Excel import.',
+      "Which month's rating this euLikelihood/usLikelihood/ukLikelihood triad is for, as YYYY-MM. Defaults to the current month if omitted. Must not be in the future. Lets an admin correct or backfill a past month's rating instead of always writing to the current month.",
+    example: '2026-03',
+  })
+  @IsString()
+  @IsOptional()
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, {
+    message: 'ratingMonth must be in YYYY-MM format',
+  })
+  ratingMonth?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'EU likelihood rating. Must be provided together with impact, usLikelihood, and ukLikelihood. Saving these creates/updates the PerilLikelihood record for ratingMonth (or the current month by default), archiving the previously-current rating to history the first time that month is written, mirroring the peril-likelihood Excel import.',
     enum: Likelihood,
   })
   @IsEnum(Likelihood)
@@ -88,7 +102,7 @@ export class UpdatePerilDto {
 
   @ApiPropertyOptional({
     description:
-      'US likelihood rating. Must be provided together with euLikelihood and ukLikelihood.',
+      'US likelihood rating. Must be provided together with impact, euLikelihood, and ukLikelihood.',
     enum: Likelihood,
   })
   @IsEnum(Likelihood)
@@ -97,7 +111,7 @@ export class UpdatePerilDto {
 
   @ApiPropertyOptional({
     description:
-      'UK likelihood rating. Must be provided together with euLikelihood and usLikelihood.',
+      'UK likelihood rating. Must be provided together with impact, euLikelihood, and usLikelihood.',
     enum: Likelihood,
   })
   @IsEnum(Likelihood)
@@ -107,7 +121,8 @@ export class UpdatePerilDto {
   @ApiPropertyOptional({
     description:
       'Control question. Must be provided together with controlSource. Whitespace/line breaks are preserved as-is.',
-    example: 'Is multi-factor authentication enforced for all privileged accounts?',
+    example:
+      'Is multi-factor authentication enforced for all privileged accounts?',
   })
   @IsString()
   @IsOptional()

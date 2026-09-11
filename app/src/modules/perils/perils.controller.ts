@@ -46,7 +46,7 @@ export class PerilsController {
   @ApiOperation({
     summary: 'Get perils',
     description:
-      'Retrieves a paginated list of perils. Supports optional filtering by riskCategoryId, sectorId, impact, region, search across name/description, ordering, and including soft-deleted records (excluded by default).',
+      'Retrieves a paginated list of perils. Supports optional filtering by riskCategoryId, sectorId, natureOfLossId, impact, region, search across name/description, ordering, and including soft-deleted records (excluded by default).',
   })
   @ApiOkResponse({
     description: 'Returns paginated perils',
@@ -108,8 +108,9 @@ export class PerilsController {
                 type: 'object',
                 nullable: true,
                 description:
-                  'Most recent EU/US/UK likelihood snapshot for this peril, if one has ever been set (via this API or the peril-likelihood Excel import).',
+                  "Most recent dated PerilLikelihood snapshot for this peril (impact/EU/US/UK all recorded together per month), if one has ever been set (via this API or the peril-likelihood Excel import). impact here is that same latest month's severity, mirrored onto the top-level impact field below.",
                 properties: {
+                  impact: { type: 'string' },
                   eu: { type: 'string' },
                   us: { type: 'string' },
                   uk: { type: 'string' },
@@ -168,6 +169,39 @@ export class PerilsController {
   @ApiResponse({ status: 404, description: 'Peril not found' })
   async findOne(@Param('id') id: string): Promise<any> {
     return this.perilsService.findOne(id);
+  }
+
+  @Get(':id/likelihoods')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: "Get a peril's rating history",
+    description:
+      'Returns every dated PerilLikelihood snapshot for this peril (newest first), so an admin editor can see which months already have a rating and pick one to correct or backfill via PATCH .../perils/:id with ratingMonth.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'Peril ID',
+    example: '123e4567-e89b-12d3-a456-426614174000',
+  })
+  @ApiOkResponse({
+    description: "Returns the peril's dated rating snapshots, newest first",
+    schema: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          createdAt: { type: 'string', format: 'date-time' },
+          impact: { type: 'string' },
+          eu: { type: 'string' },
+          us: { type: 'string' },
+          uk: { type: 'string' },
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 404, description: 'Peril not found' })
+  async getLikelihoodHistory(@Param('id') id: string): Promise<any> {
+    return this.perilsService.getLikelihoodHistory(id);
   }
 
   @Post()

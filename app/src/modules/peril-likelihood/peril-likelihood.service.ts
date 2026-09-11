@@ -629,6 +629,14 @@ export class PerilLikelihoodService {
             await tx.perilLikelihood.createMany({
               data: toCreateEntries.map(({ item, perilId }) => ({
                 perilId,
+                // THE IMPORT'S IMPACT COLUMN IS OPTIONAL (MOSTLY MEANT FOR
+                // BRAND-NEW PERILS) - FALL BACK TO THE PERIL'S CURRENT
+                // SEVERITY, THEN 'MODERATE' AS A LAST RESORT, SINCE
+                // PerilLikelihood.impact CAN'T BE LEFT UNSET.
+                impact:
+                  item.rowData.impact ??
+                  impactByPerilId.get(perilId) ??
+                  'MODERATE',
                 eu: item.rowData.eu,
                 us: item.rowData.us,
                 uk: item.rowData.uk,
@@ -647,6 +655,15 @@ export class PerilLikelihoodService {
                 },
               },
               data: {
+                // A RE-IMPORT OF THE SAME MONTH THAT DOESN'T CARRY AN IMPACT
+                // VALUE SHOULD LEAVE THIS ROW'S OWN SEVERITY UNTOUCHED, NOT
+                // SILENTLY OVERWRITE IT WITH WHATEVER THE PERIL'S CURRENT
+                // (POSSIBLY LATER-MONTH) SEVERITY HAPPENS TO BE.
+                impact:
+                  item.rowData.impact ??
+                  existingCurrentMonthByPerilId.get(perilId)?.impact ??
+                  impactByPerilId.get(perilId) ??
+                  'MODERATE',
                 eu: item.rowData.eu,
                 us: item.rowData.us,
                 uk: item.rowData.uk,

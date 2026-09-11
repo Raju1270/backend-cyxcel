@@ -22,6 +22,14 @@ export class PerilsQueryDto extends PaginationQueryDto {
   sectorId?: string;
 
   @ApiPropertyOptional({
+    description: 'Filter by nature of loss ID',
+    example: '123e4567-e89b-12d3-a456-426614174000',
+  })
+  @IsString()
+  @IsOptional()
+  natureOfLossId?: string;
+
+  @ApiPropertyOptional({
     description: 'Filter by impact rating',
     enum: Impact,
   })

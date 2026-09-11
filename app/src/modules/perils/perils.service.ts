@@ -4,7 +4,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { Likelihood, Prisma } from '@prisma/client';
+import { Impact, Likelihood, Prisma } from '@prisma/client';
 import { PaginationMeta } from '../../common/dto/pagination-query.dto';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { slugify } from '../../common/utils/slugify.util';
@@ -61,7 +61,11 @@ const TRANSACTION_OPTIONS = {
   maxWait: 10000,
 };
 
-interface LikelihoodTriad {
+// SEVERITY (impact) IS NOW PART OF THE SAME DATED PerilLikelihood ROW AS
+// EU/US/UK, NOT A SEPARATE ALWAYS-INDEPENDENT FIELD - SO ALL FOUR MUST BE
+// PROVIDED TOGETHER, EXACTLY LIKE EU/US/UK ALREADY HAD TO BE.
+interface RatingQuad {
+  impact?: Impact;
   euLikelihood?: Likelihood;
   usLikelihood?: Likelihood;
   ukLikelihood?: Likelihood;
@@ -73,6 +77,7 @@ interface ControlPair {
 }
 
 interface LikelihoodSummary {
+  impact: Impact;
   eu: Likelihood;
   us: Likelihood;
   uk: Likelihood;
@@ -99,6 +104,12 @@ function getCurrentMonthSnapshotDate(): Date {
   const year = now.getUTCFullYear();
   const month = String(now.getUTCMonth() + 1).padStart(2, '0');
   return new Date(`${year}-${month}-02`);
+}
+
+// SAME "2ND OF THE MONTH" CONVENTION, FOR AN EXPLICIT ratingMonth (YYYY-MM)
+// INSTEAD OF "NOW" - LETS update() TARGET A SPECIFIC PAST MONTH'S ROW.
+function parseRatingMonth(ratingMonth: string): Date {
+  return new Date(`${ratingMonth}-02`);
 }
 
 @Injectable()
@@ -129,6 +140,12 @@ export class PerilsService {
     if (query.sectorId) {
       where.sectors = {
         some: { id: query.sectorId },
+      };
+    }
+
+    if (query.natureOfLossId) {
+      where.natureOfLosses = {
+        some: { id: query.natureOfLossId },
       };
     }
 
@@ -214,6 +231,7 @@ export class PerilsService {
       distinct: ['perilId'],
       select: {
         perilId: true,
+        impact: true,
         eu: true,
         us: true,
         uk: true,
@@ -226,6 +244,7 @@ export class PerilsService {
       latest.map((row) => [
         row.perilId,
         {
+          impact: row.impact,
           eu: row.eu,
           us: row.us,
           uk: row.uk,
@@ -236,30 +255,34 @@ export class PerilsService {
     );
   }
 
-  private validateLikelihoodTriad(
-    dto: LikelihoodTriad,
-  ): [Likelihood, Likelihood, Likelihood] | null {
-    const { euLikelihood, usLikelihood, ukLikelihood } = dto;
-    const providedCount = [euLikelihood, usLikelihood, ukLikelihood].filter(
-      (v) => v !== undefined,
-    ).length;
+  private validateRatingQuad(
+    dto: RatingQuad,
+  ): [Impact, Likelihood, Likelihood, Likelihood] | null {
+    const { impact, euLikelihood, usLikelihood, ukLikelihood } = dto;
+    const providedCount = [
+      impact,
+      euLikelihood,
+      usLikelihood,
+      ukLikelihood,
+    ].filter((v) => v !== undefined).length;
 
     if (providedCount === 0) {
       return null;
     }
 
     if (
-      providedCount !== 3 ||
+      providedCount !== 4 ||
+      !impact ||
       !euLikelihood ||
       !usLikelihood ||
       !ukLikelihood
     ) {
       throw new BadRequestException(
-        'euLikelihood, usLikelihood, and ukLikelihood must all be provided together',
+        'impact, euLikelihood, usLikelihood, and ukLikelihood must all be provided together',
       );
     }
 
-    return [euLikelihood, usLikelihood, ukLikelihood];
+    return [impact, euLikelihood, usLikelihood, ukLikelihood];
   }
 
   private validateControlPair(dto: ControlPair): [string, string] | null {
@@ -309,7 +332,7 @@ export class PerilsService {
 
   async create(dto: CreatePerilDto): Promise<any> {
     const slug = await this.generateUniqueSlug(dto.name);
-    const triad = this.validateLikelihoodTriad(dto);
+    const quad = this.validateRatingQuad(dto);
     const controlPair = this.validateControlPair(dto);
 
     const created = await this.prisma.$transaction(async (tx) => {
@@ -355,10 +378,22 @@ export class PerilsService {
         include: PERIL_INCLUDE,
       });
 
-      if (triad) {
-        const [eu, us, uk] = triad;
+      if (quad) {
+        const [impact, eu, us, uk] = quad;
+        // MUST MATCH THE SAME "2ND OF THE MONTH" CANONICAL DATE update() LOOKS
+        // UP BY perilId_createdAt - WITHOUT THIS, PRISMA'S DEFAULT now() STAMPS
+        // THE EXACT CREATION INSTANT, SO EDITING THIS PERIL'S RATING AGAIN
+        // LATER THE *SAME* MONTH NEVER MATCHES THAT ROW AND SILENTLY CREATES A
+        // SECOND ONE INSTEAD OF UPDATING THE FIRST.
         await tx.perilLikelihood.create({
-          data: { perilId: peril.id, eu, us, uk },
+          data: {
+            perilId: peril.id,
+            impact,
+            eu,
+            us,
+            uk,
+            createdAt: getCurrentMonthSnapshotDate(),
+          },
         });
       }
 
@@ -376,7 +411,7 @@ export class PerilsService {
     // Ensure record exists and is not soft-deleted
     const existing = await this.prisma.peril.findFirst({
       where: { id, deletedAt: null },
-      select: { name: true, impact: true },
+      select: { name: true },
     });
 
     if (!existing) {
@@ -388,45 +423,95 @@ export class PerilsService {
         ? await this.generateUniqueSlug(dto.name, id)
         : undefined;
 
-    const triad = this.validateLikelihoodTriad(dto);
+    const quad = this.validateRatingQuad(dto);
     const controlPair = this.validateControlPair(dto);
 
+    // WITHOUT THIS, ratingMonth GIVEN ALONE (E.G. A CALLER'S MISTAKE, OR A
+    // FUTURE CLIENT BUG) WOULD BE SILENTLY IGNORED SINCE IT'S ONLY EVER READ
+    // INSIDE THE if (quad) BLOCK BELOW - BETTER TO FAIL LOUDLY THAN LET
+    // SOMEONE THINK THEY TARGETED A MONTH WHEN NOTHING ACTUALLY HAPPENED.
+    if (dto.ratingMonth !== undefined && !quad) {
+      throw new BadRequestException(
+        'ratingMonth requires impact, euLikelihood, usLikelihood, and ukLikelihood to also be provided',
+      );
+    }
+
+    let snapshotDate: Date | undefined;
+    if (quad) {
+      snapshotDate = dto.ratingMonth
+        ? parseRatingMonth(dto.ratingMonth)
+        : getCurrentMonthSnapshotDate();
+
+      if (snapshotDate.getTime() > getCurrentMonthSnapshotDate().getTime()) {
+        throw new BadRequestException('ratingMonth cannot be in the future');
+      }
+    }
+
     const updated = await this.prisma.$transaction(async (tx) => {
-      if (triad) {
-        const snapshotDate = getCurrentMonthSnapshotDate();
-        const currentMonthLikelihood = await tx.perilLikelihood.findUnique({
-          where: { perilId_createdAt: { perilId: id, createdAt: snapshotDate } },
+      // CACHED "CURRENT" SEVERITY ON Peril.impact ITSELF, DERIVED FROM
+      // WHICHEVER PerilLikelihood ROW IS ACTUALLY THE LATEST BY DATE - NOT
+      // BLINDLY dto.impact - SO BACKFILLING AN OLDER MONTH NEVER OVERWRITES
+      // THE PERIL'S REAL CURRENT SEVERITY WITH AN OUT-OF-ORDER EDIT.
+      let latestImpact: Impact | undefined;
+
+      if (quad && snapshotDate) {
+        const targetMonthLikelihood = await tx.perilLikelihood.findUnique({
+          where: {
+            perilId_createdAt: { perilId: id, createdAt: snapshotDate },
+          },
         });
 
-        // ONLY SNAPSHOT HISTORY ON THE FIRST EDIT OF THE MONTH - A SECOND EDIT
-        // WITHIN THE SAME MONTH IS A CORRECTION TO THIS MONTH'S OWN VALUE, NOT
-        // A NEW MONTH, SO IT SHOULD OVERWRITE RATHER THAN STACK ANOTHER
+        // ONLY SNAPSHOT HISTORY ON THE FIRST WRITE OF THIS MONTH - A SECOND
+        // EDIT OF THE SAME MONTH IS A CORRECTION TO THAT MONTH'S OWN VALUE,
+        // NOT A NEW MONTH, SO IT SHOULD OVERWRITE RATHER THAN STACK ANOTHER
         // HISTORY ENTRY (MIRRORS THE EXCEL IMPORT'S "RE-IMPORTS SKIP" RULE).
-        if (!currentMonthLikelihood) {
+        if (!targetMonthLikelihood) {
+          // SCOPED TO STRICTLY BEFORE THE TARGET MONTH (NOT JUST "MOST RECENT
+          // OVERALL") - NOW THAT ratingMonth CAN BACKFILL AN ARBITRARY PAST
+          // MONTH, THE GLOBAL LATEST ROW MAY BE *AFTER* THE TARGET MONTH AND
+          // WOULD OTHERWISE GET WRONGLY SNAPSHOTTED AS ITS "PREVIOUS" VALUE.
           const prevLikelihood = await tx.perilLikelihood.findFirst({
-            where: { perilId: id },
+            where: { perilId: id, createdAt: { lt: snapshotDate } },
             orderBy: { createdAt: 'desc' },
           });
 
-          await tx.perilHistory.create({
-            data: {
-              perilId: id,
-              impact: existing.impact,
-              eu: prevLikelihood?.eu ?? null,
-              us: prevLikelihood?.us ?? null,
-              uk: prevLikelihood?.uk ?? null,
-              likelihoodCreatedAt: prevLikelihood?.createdAt ?? new Date(),
-              likelihoodUpdatedAt: prevLikelihood?.updatedAt ?? new Date(),
-            },
-          });
+          // NO EARLIER RECORD EXISTS AT ALL (E.G. BACKFILLING A MONTH BEFORE
+          // THIS PERIL'S FIRST-EVER RATING) - THERE IS NO REAL "PREVIOUS"
+          // STATE TO SNAPSHOT, SO SKIP HISTORY RATHER THAN FABRICATE ONE FROM
+          // existing.impact/now(), WHICH WOULD MISLABEL A LATER MONTH'S VALUE
+          // AS IF IT WERE THE STATE BEFORE THIS (EARLIEST) MONTH.
+          if (prevLikelihood) {
+            await tx.perilHistory.create({
+              data: {
+                perilId: id,
+                impact: prevLikelihood.impact,
+                eu: prevLikelihood.eu,
+                us: prevLikelihood.us,
+                uk: prevLikelihood.uk,
+                likelihoodCreatedAt: prevLikelihood.createdAt,
+                likelihoodUpdatedAt: prevLikelihood.updatedAt,
+              },
+            });
+          }
         }
 
-        const [eu, us, uk] = triad;
+        const [impact, eu, us, uk] = quad;
         await tx.perilLikelihood.upsert({
-          where: { perilId_createdAt: { perilId: id, createdAt: snapshotDate } },
-          create: { perilId: id, eu, us, uk, createdAt: snapshotDate },
-          update: { eu, us, uk },
+          where: {
+            perilId_createdAt: { perilId: id, createdAt: snapshotDate },
+          },
+          create: { perilId: id, impact, eu, us, uk, createdAt: snapshotDate },
+          update: { impact, eu, us, uk },
         });
+
+        // RE-READ RATHER THAN ASSUME snapshotDate IS THE LATEST - A BACKFILLED
+        // PAST MONTH MUST NOT CHANGE WHAT "CURRENT" SEVERITY MEANS IF A LATER
+        // MONTH ALREADY EXISTS.
+        const latestLikelihood = await tx.perilLikelihood.findFirst({
+          where: { perilId: id },
+          orderBy: { createdAt: 'desc' },
+        });
+        latestImpact = latestLikelihood?.impact;
       }
 
       return tx.peril.update({
@@ -437,7 +522,7 @@ export class PerilsService {
           ...(dto.description !== undefined
             ? { description: dto.description }
             : {}),
-          ...(dto.impact !== undefined ? { impact: dto.impact } : {}),
+          ...(latestImpact !== undefined ? { impact: latestImpact } : {}),
           ...(dto.region !== undefined ? { region: dto.region } : {}),
           ...(dto.riskCategoryIds !== undefined
             ? {
@@ -486,6 +571,34 @@ export class PerilsService {
     const likelihoodByPerilId = await this.getLatestLikelihoodMap([updated.id]);
 
     return withLikelihood(updated, likelihoodByPerilId);
+  }
+
+  // ALL RECORDED MONTHS FOR A PERIL, NEWEST FIRST - LETS THE ADMIN UI SHOW
+  // WHICH MONTHS ALREADY HAVE A RATING AND PREFILL ONE WHEN PICKED, INSTEAD OF
+  // ONLY EVER SEEING THE SINGLE LATEST SNAPSHOT (SEE getLatestLikelihoodMap).
+  async getLikelihoodHistory(id: string): Promise<
+    {
+      createdAt: Date;
+      impact: Impact;
+      eu: Likelihood;
+      us: Likelihood;
+      uk: Likelihood;
+    }[]
+  > {
+    const existing = await this.prisma.peril.findFirst({
+      where: { id, deletedAt: null },
+      select: { id: true },
+    });
+
+    if (!existing) {
+      throw new NotFoundException(`Peril with ID ${id} not found`);
+    }
+
+    return this.prisma.perilLikelihood.findMany({
+      where: { perilId: id },
+      orderBy: { createdAt: 'desc' },
+      select: { createdAt: true, impact: true, eu: true, us: true, uk: true },
+    });
   }
 
   async softDelete(id: string): Promise<void> {
