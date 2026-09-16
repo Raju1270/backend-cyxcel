@@ -4,10 +4,17 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { Impact, Likelihood, Prisma } from '@prisma/client';
+import {
+  ControlQuestionType,
+  ControlSubPartsStyle,
+  Impact,
+  Likelihood,
+  Prisma,
+} from '@prisma/client';
 import { PaginationMeta } from '../../common/dto/pagination-query.dto';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { slugify } from '../../common/utils/slugify.util';
+import { ControlSubPartDto } from './dto/control-sub-part.dto';
 import { CreatePerilDto } from './dto/create-peril.dto';
 import { PerilsQueryDto } from './dto/perils-query.dto';
 import { UpdatePerilDto } from './dto/update-peril.dto';
@@ -34,6 +41,10 @@ const CONTROL_SELECT = {
   id: true,
   question: true,
   source: true,
+  type: true,
+  introText: true,
+  subParts: true,
+  subPartsStyle: true,
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.ControlSelect;
@@ -71,9 +82,22 @@ interface RatingQuad {
   ukLikelihood?: Likelihood;
 }
 
-interface ControlPair {
+interface ControlInput {
   controlQuestion?: string;
   controlSource?: string;
+  controlType?: ControlQuestionType;
+  controlIntroText?: string;
+  controlSubParts?: ControlSubPartDto[];
+  controlSubPartsStyle?: ControlSubPartsStyle;
+}
+
+interface ValidatedControl {
+  question: string;
+  source: string;
+  type: ControlQuestionType;
+  introText: string | null;
+  subParts: ControlSubPartDto[] | null;
+  subPartsStyle: ControlSubPartsStyle;
 }
 
 interface LikelihoodSummary {
@@ -285,8 +309,15 @@ export class PerilsService {
     return [impact, euLikelihood, usLikelihood, ukLikelihood];
   }
 
-  private validateControlPair(dto: ControlPair): [string, string] | null {
-    const { controlQuestion, controlSource } = dto;
+  private validateControl(dto: ControlInput): ValidatedControl | null {
+    const {
+      controlQuestion,
+      controlSource,
+      controlType,
+      controlIntroText,
+      controlSubParts,
+      controlSubPartsStyle,
+    } = dto;
     const providedCount = [controlQuestion, controlSource].filter(
       (v) => v !== undefined,
     ).length;
@@ -301,7 +332,34 @@ export class PerilsService {
       );
     }
 
-    return [controlQuestion, controlSource];
+    const type = controlType ?? ControlQuestionType.SINGLE_LINE;
+    const isSection = type === ControlQuestionType.SECTION_WITH_SUBPARTS;
+
+    if (isSection) {
+      if (!controlSubParts || controlSubParts.length === 0) {
+        throw new BadRequestException(
+          'controlSubParts must contain at least one sub-part when controlType is SECTION_WITH_SUBPARTS',
+        );
+      }
+      for (const subPart of controlSubParts) {
+        if (!subPart.key?.trim() || !subPart.text?.trim()) {
+          throw new BadRequestException(
+            'Each controlSubParts entry needs a non-empty key and non-empty text',
+          );
+        }
+      }
+    }
+
+    return {
+      question: controlQuestion,
+      source: controlSource,
+      type,
+      // ONLY MEANINGFUL FOR SECTION_WITH_SUBPARTS - DROPPED RATHER THAN STORED
+      // STALE IF A CONTROL IS EVER SWITCHED BACK TO SINGLE_LINE.
+      introText: isSection ? (controlIntroText ?? null) : null,
+      subParts: isSection ? controlSubParts! : null,
+      subPartsStyle: controlSubPartsStyle ?? ControlSubPartsStyle.LETTERED,
+    };
   }
 
   private async generateUniqueSlug(
@@ -333,7 +391,7 @@ export class PerilsService {
   async create(dto: CreatePerilDto): Promise<any> {
     const slug = await this.generateUniqueSlug(dto.name);
     const quad = this.validateRatingQuad(dto);
-    const controlPair = this.validateControlPair(dto);
+    const control = this.validateControl(dto);
 
     const created = await this.prisma.$transaction(async (tx) => {
       const peril = await tx.peril.create({
@@ -364,12 +422,16 @@ export class PerilsService {
                 },
               }
             : {}),
-          ...(controlPair
+          ...(control
             ? {
                 control: {
                   create: {
-                    question: controlPair[0],
-                    source: controlPair[1],
+                    question: control.question,
+                    source: control.source,
+                    type: control.type,
+                    introText: control.introText,
+                    subParts: (control.subParts as unknown as Prisma.InputJsonValue[] | undefined) ?? Prisma.DbNull,
+                    subPartsStyle: control.subPartsStyle,
                   },
                 },
               }
@@ -424,7 +486,7 @@ export class PerilsService {
         : undefined;
 
     const quad = this.validateRatingQuad(dto);
-    const controlPair = this.validateControlPair(dto);
+    const control = this.validateControl(dto);
 
     // WITHOUT THIS, ratingMonth GIVEN ALONE (E.G. A CALLER'S MISTAKE, OR A
     // FUTURE CLIENT BUG) WOULD BE SILENTLY IGNORED SINCE IT'S ONLY EVER READ
@@ -545,17 +607,25 @@ export class PerilsService {
                 },
               }
             : {}),
-          ...(controlPair
+          ...(control
             ? {
                 control: {
                   upsert: {
                     create: {
-                      question: controlPair[0],
-                      source: controlPair[1],
+                      question: control.question,
+                      source: control.source,
+                      type: control.type,
+                      introText: control.introText,
+                      subParts: (control.subParts as unknown as Prisma.InputJsonValue[] | undefined) ?? Prisma.DbNull,
+                      subPartsStyle: control.subPartsStyle,
                     },
                     update: {
-                      question: controlPair[0],
-                      source: controlPair[1],
+                      question: control.question,
+                      source: control.source,
+                      type: control.type,
+                      introText: control.introText,
+                      subParts: (control.subParts as unknown as Prisma.InputJsonValue[] | undefined) ?? Prisma.DbNull,
+                      subPartsStyle: control.subPartsStyle,
                     },
                   },
                 },

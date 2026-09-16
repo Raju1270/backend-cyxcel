@@ -1,5 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Impact, Likelihood, Region } from '@prisma/client';
+import {
+  ControlQuestionType,
+  ControlSubPartsStyle,
+  Impact,
+  Likelihood,
+  Region,
+} from '@prisma/client';
+import { Type } from 'class-transformer';
 import {
   ArrayUnique,
   IsArray,
@@ -7,7 +14,9 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  ValidateNested,
 } from 'class-validator';
+import { ControlSubPartDto } from './control-sub-part.dto';
 
 export class CreatePerilDto {
   @ApiProperty({
@@ -124,4 +133,42 @@ export class CreatePerilDto {
   @IsString()
   @IsOptional()
   controlSource?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Control question format. SINGLE_LINE (default) is a plain question with one answer input. SECTION_WITH_SUBPARTS breaks the question into lettered sub-parts (see controlSubParts), each answered independently.',
+    enum: ControlQuestionType,
+  })
+  @IsEnum(ControlQuestionType)
+  @IsOptional()
+  controlType?: ControlQuestionType;
+
+  @ApiPropertyOptional({
+    description:
+      'Intro line shown below the main question before its sub-parts (e.g. "This entails practices such as:"). Only meaningful when controlType is SECTION_WITH_SUBPARTS.',
+    example: 'This entails practices such as:',
+  })
+  @IsString()
+  @IsOptional()
+  controlIntroText?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Sub-parts for a SECTION_WITH_SUBPARTS control question - each needs a key (e.g. "a") and its own text. Every sub-part is answered Yes/No/N-A on the user panel. Ignored when controlType is SINGLE_LINE.',
+    type: [ControlSubPartDto],
+  })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ControlSubPartDto)
+  @IsOptional()
+  controlSubParts?: ControlSubPartDto[];
+
+  @ApiPropertyOptional({
+    description:
+      'How controlSubParts are marked on the user panel: LETTERED shows "(a)", "(b)", ...; NUMBERED shows "1", "2", ...; BULLET shows a plain bullet for each. Defaults to LETTERED. Only meaningful when controlType is SECTION_WITH_SUBPARTS.',
+    enum: ControlSubPartsStyle,
+  })
+  @IsEnum(ControlSubPartsStyle)
+  @IsOptional()
+  controlSubPartsStyle?: ControlSubPartsStyle;
 }

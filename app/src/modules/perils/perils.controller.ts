@@ -127,6 +127,26 @@ export class PerilsController {
                   id: { type: 'string' },
                   question: { type: 'string' },
                   source: { type: 'string' },
+                  type: {
+                    type: 'string',
+                    enum: ['SINGLE_LINE', 'SECTION_WITH_SUBPARTS'],
+                  },
+                  introText: { type: 'string', nullable: true },
+                  subParts: {
+                    type: 'array',
+                    nullable: true,
+                    items: {
+                      type: 'object',
+                      properties: {
+                        key: { type: 'string' },
+                        text: { type: 'string' },
+                      },
+                    },
+                  },
+                  subPartsStyle: {
+                    type: 'string',
+                    enum: ['LETTERED', 'NUMBERED', 'BULLET'],
+                  },
                   createdAt: { type: 'string', format: 'date-time' },
                   updatedAt: { type: 'string', format: 'date-time' },
                 },
