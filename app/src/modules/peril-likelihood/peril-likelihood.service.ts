@@ -4,6 +4,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import * as XLSX from 'xlsx';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { ImportLogService } from '../import-log/import-log.service';
 import { PreviewStatus } from '../../common/utils/preview-status.enum';
@@ -18,10 +19,12 @@ import {
 import {
   filterAllowedSheets,
   findMissingSheets,
+  getAllowedSheets,
   validateRequiredColumnsForSheet,
 } from './validators/workbook.validator';
 import { validatePerilRow } from './validators/peril-row.validator';
 import { isEmptyOrHeaderRow, parsePerilRow } from './utils/row-parser.util';
+import { computePerilChangeSummary } from './utils/change-summary.util';
 
 type LatestPerilLikelihoodRow = {
   Title: string;
@@ -138,6 +141,10 @@ export class PerilLikelihoodService {
                 { name: { in: Array.from(candidateTitles) } },
               ],
             },
+            include: {
+              control: { select: { question: true, source: true } },
+              natureOfLosses: { select: { name: true } },
+            },
           })
         : [];
 
@@ -148,12 +155,51 @@ export class PerilLikelihoodService {
       const monthlyLikelihoods = existingPerilIds.length
         ? await this.prisma.perilLikelihood.findMany({
             where: { perilId: { in: existingPerilIds }, createdAt },
-            select: { perilId: true },
+            select: {
+              perilId: true,
+              eu: true,
+              us: true,
+              uk: true,
+              impact: true,
+            },
           })
         : [];
       const perilIdsWithMonthData = new Set(
         monthlyLikelihoods.map((l) => l.perilId),
       );
+      const likelihoodForMonthByPerilId = new Map(
+        monthlyLikelihoods.map((l) => [l.perilId, l]),
+      );
+
+      // Fallback baseline for perils that don't have THIS month's data yet
+      // (the common case when rolling a previous month's export forward) -
+      // the most recent likelihood before the target month.
+      const priorLikelihoods = existingPerilIds.length
+        ? await this.prisma.perilLikelihood.findMany({
+            where: {
+              perilId: { in: existingPerilIds },
+              createdAt: { lt: createdAt },
+            },
+            select: {
+              perilId: true,
+              eu: true,
+              us: true,
+              uk: true,
+              impact: true,
+              createdAt: true,
+            },
+            orderBy: { createdAt: 'desc' },
+          })
+        : [];
+      const priorLikelihoodByPerilId = new Map<
+        string,
+        (typeof priorLikelihoods)[number]
+      >();
+      for (const likelihood of priorLikelihoods) {
+        if (!priorLikelihoodByPerilId.has(likelihood.perilId)) {
+          priorLikelihoodByPerilId.set(likelihood.perilId, likelihood);
+        }
+      }
 
       for (const sheetName of sheetsToProcess) {
         const rows = workbook[sheetName] as LatestPerilLikelihoodRow[];
@@ -202,6 +248,26 @@ export class PerilLikelihoodService {
 
           const hasExistingMonthData =
             !!existingPeril && perilIdsWithMonthData.has(existingPeril.id);
+
+          const likelihoodBaseline = existingPeril
+            ? (likelihoodForMonthByPerilId.get(existingPeril.id) ??
+              priorLikelihoodByPerilId.get(existingPeril.id) ??
+              null)
+            : null;
+          const { changeType, changes } = computePerilChangeSummary(
+            existingPeril,
+            likelihoodBaseline,
+            {
+              eu: validationResult.eu,
+              us: validationResult.us,
+              uk: validationResult.uk,
+              impact: validationResult.impact,
+              description: validationResult.description,
+              control: validationResult.control,
+              natureOfLoss: matchedNatureOfLoss,
+            },
+          );
+
           const warnings = [
             ...validationResult.warnings,
             ...(hasExistingMonthData
@@ -228,6 +294,9 @@ export class PerilLikelihoodService {
               description: validationResult.description,
               impact: validationResult.impact ?? null,
               natureOfLoss: matchedNatureOfLoss,
+              control: validationResult.control ?? null,
+              changeType,
+              changes,
             },
             _data: {
               row: excelRowNumber,
@@ -265,6 +334,15 @@ export class PerilLikelihoodService {
       const duplicateCount = previewItems.filter(
         (item) => item._data.status === PreviewStatus.DUPLICATE,
       ).length;
+      const newPerilsCount = previewItems.filter(
+        (item) => item.rowData.changeType === 'NEW',
+      ).length;
+      const updatedPerilsCount = previewItems.filter(
+        (item) => item.rowData.changeType === 'UPDATED',
+      ).length;
+      const unchangedPerilsCount = previewItems.filter(
+        (item) => item.rowData.changeType === 'UNCHANGED',
+      ).length;
 
       return {
         month,
@@ -277,6 +355,9 @@ export class PerilLikelihoodService {
           ready: readyCount,
           duplicate: duplicateCount,
           invalid: invalidItems,
+          newPerils: newPerilsCount,
+          updatedPerils: updatedPerilsCount,
+          unchangedPerils: unchangedPerilsCount,
         },
         invalidItemsDetails,
         warnings: globalWarnings.length > 0 ? globalWarnings : undefined,
@@ -597,19 +678,42 @@ export class PerilLikelihoodService {
           }
 
           for (const { item, perilId } of entries) {
-            const oldImpact = impactByPerilId.get(perilId);
+            // EMPTY STRING MEANS "COLUMN LEFT BLANK" - NOT PROVIDED, SO DON'T
+            // OVERWRITE THE EXISTING VALUE. UNLIKE THE OLD BEHAVIOUR, THIS RUNS
+            // ON EVERY IMPORT (NOT JUST WHEN IMPACT CHANGES) SO THAT RE-UPLOADING
+            // A ROLLED-FORWARD SHEET WITH EDITED DESCRIPTION/IMPACT ACTUALLY
+            // PERSISTS THOSE EDITS.
+            const descriptionUpdate = item.rowData.description || undefined;
+            const impactUpdate = item.rowData.impact ?? undefined;
 
-            if (
-              item.rowData.impact !== undefined &&
-              item.rowData.impact !== oldImpact
-            ) {
+            if (descriptionUpdate !== undefined || impactUpdate !== undefined) {
               await tx.peril.update({
                 where: {
                   id: perilId,
                 },
                 data: {
-                  impact: item.rowData.impact,
-                  description: item.rowData.description ?? undefined,
+                  ...(impactUpdate !== undefined
+                    ? { impact: impactUpdate }
+                    : {}),
+                  ...(descriptionUpdate !== undefined
+                    ? { description: descriptionUpdate }
+                    : {}),
+                },
+              });
+            }
+
+            const control = item.rowData.control;
+            if (control && (control.question || control.source)) {
+              await tx.control.upsert({
+                where: { perilId },
+                create: {
+                  perilId,
+                  question: control.question ?? '',
+                  source: control.source ?? '',
+                },
+                update: {
+                  ...(control.question ? { question: control.question } : {}),
+                  ...(control.source ? { source: control.source } : {}),
                 },
               });
             }
@@ -745,5 +849,86 @@ export class PerilLikelihoodService {
       preview.data,
       preview.invalidItemsDetails,
     );
+  }
+
+  /**
+   * Export a given month's peril data (one sheet per risk category, matching
+   * the same layout the import expects) so an admin can roll it forward: edit
+   * the EU/US/UK/Impact/Description/Control values for the new month and
+   * re-upload the same file via /validate + /import. EU/US/UK column headers
+   * are left generic (not month-suffixed) so the file re-imports cleanly
+   * regardless of which month it's later uploaded against.
+   */
+  async exportMonthData(month: string, year: string): Promise<Buffer> {
+    const createdAt = new Date(`${year}-${month}-02`);
+    const slugs = getAllowedSheets();
+
+    const riskCategories = await this.prisma.riskCategory.findMany({
+      where: { slug: { in: slugs } },
+      select: {
+        slug: true,
+        perils: {
+          where: { deletedAt: null },
+          select: {
+            name: true,
+            description: true,
+            control: { select: { question: true, source: true } },
+            natureOfLosses: { select: { name: true } },
+            likelihoods: {
+              where: { createdAt },
+              select: { eu: true, us: true, uk: true, impact: true },
+              take: 1,
+            },
+          },
+          orderBy: { name: 'asc' },
+        },
+      },
+    });
+
+    const perilsBySlug = new Map(riskCategories.map((rc) => [rc.slug, rc]));
+    const header = [
+      'Title',
+      'Description',
+      'Nature of loss',
+      'Control',
+      'Source of Controls',
+      'Impact of Peril',
+      'EU',
+      'US',
+      'UK',
+    ];
+
+    const workbook = XLSX.utils.book_new();
+    for (const slug of slugs) {
+      const rows: (string | number)[][] = [header];
+
+      for (const peril of perilsBySlug.get(slug)?.perils ?? []) {
+        const likelihood = peril.likelihoods[0];
+        if (!likelihood) {
+          // No data for this peril in the requested month - nothing to roll forward.
+          continue;
+        }
+
+        rows.push([
+          peril.name,
+          peril.description ?? '',
+          peril.natureOfLosses.map((n) => n.name).join(', '),
+          peril.control?.question ?? '',
+          peril.control?.source ?? '',
+          likelihood.impact,
+          likelihood.eu,
+          likelihood.us,
+          likelihood.uk,
+        ]);
+      }
+
+      const worksheet = XLSX.utils.aoa_to_sheet(rows);
+      XLSX.utils.book_append_sheet(workbook, worksheet, slug);
+    }
+
+    return XLSX.write(workbook, {
+      type: 'buffer',
+      bookType: 'xlsx',
+    }) as Buffer;
   }
 }

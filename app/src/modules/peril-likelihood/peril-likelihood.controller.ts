@@ -1,6 +1,8 @@
 import {
   Controller,
+  Get,
   Post,
+  Query,
   UseInterceptors,
   UploadedFile,
   Body,
@@ -12,6 +14,7 @@ import type { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Express, Request } from 'express';
 import 'multer';
+import { ApiOperation, ApiQuery, ApiResponse } from '@nestjs/swagger';
 import {
   ApiTag,
   ApiValidateOperationWithDate,
@@ -84,6 +87,44 @@ export class PerilLikelihoodController {
       userId,
       filename,
     );
+  }
+
+  @Get('export')
+  @ApiOperation({
+    summary:
+      "Export a given month's peril likelihood data (one sheet per risk category) so it can be edited and re-uploaded for a new month via /validate + /import",
+  })
+  @ApiQuery({ name: 'month', example: '08' })
+  @ApiQuery({ name: 'year', example: '2026' })
+  @ApiResponse({
+    status: 200,
+    description: 'The .xlsx file as a binary stream',
+  })
+  async export(
+    @Query('month') month: string,
+    @Query('year') year: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    validateMonthAndYear(month, year);
+
+    const buffer = await this.perilLikelihoodService.exportMonthData(
+      month,
+      year,
+    );
+    const monthAsString = new Date(`${year}-${month}-02`).toLocaleString(
+      'default',
+      { month: 'long' },
+    );
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="peril-likelihood-${monthAsString}-${year}.xlsx"`,
+    );
+    res.send(buffer);
   }
 
   @Post('download-with-highlights')

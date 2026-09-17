@@ -21,6 +21,11 @@ type Peril = {
   slug: string;
 };
 
+export interface ControlValue {
+  question?: string;
+  source?: string;
+}
+
 export interface ValidationResult {
   warnings: string[];
   peril: Peril | null;
@@ -29,6 +34,7 @@ export interface ValidationResult {
   uk: Likelihood;
   description: string;
   impact?: Impact;
+  control?: ControlValue;
 }
 
 /**
@@ -125,6 +131,31 @@ function parseDescriptionAndImpact(row: LatestPerilLikelihoodRow): {
 }
 
 /**
+ * Parse the "Control" / "Source of Controls" columns for a row. Both are
+ * optional and free text; undefined is returned for a field left blank so
+ * callers can tell "not provided" apart from "explicitly cleared".
+ */
+function parseControlValue(row: LatestPerilLikelihoodRow): ControlValue {
+  const toText = (value: unknown): string | undefined => {
+    if (typeof value === 'string' && value.trim() !== '') {
+      return value.trim();
+    }
+    if (typeof value === 'number') {
+      return String(value);
+    }
+    return undefined;
+  };
+
+  return {
+    question: toText(getColumnValue(row, 'Control')),
+    source: toText(
+      getColumnValue(row, 'Source of Controls') ??
+        getColumnValue(row, 'Source of Control'),
+    ),
+  };
+}
+
+/**
  * Validate peril row and return validation result.
  * `peril` may be null when the title doesn't match any existing peril yet -
  * that peril will be created on import rather than treated as an error.
@@ -161,6 +192,7 @@ export function validatePerilRow(
 
   // Parse description/impact - only used when the peril needs to be created
   const { description, impact } = parseDescriptionAndImpact(row);
+  const control = parseControlValue(row);
 
   return {
     warnings,
@@ -170,5 +202,6 @@ export function validatePerilRow(
     uk: likelihoodValues.uk,
     description,
     impact,
+    control,
   };
 }
