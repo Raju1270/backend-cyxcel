@@ -109,29 +109,17 @@ export class PerilLikelihoodService {
 
       const candidateTitles = new Set<string>();
       const candidateSlugs = new Set<string>();
-      const candidateNatureOfLossNames = new Set<string>();
       for (const sheetName of sheetsToProcess) {
         const rows = workbook[sheetName] as LatestPerilLikelihoodRow[];
         for (const row of rows) {
-          const { title, natureOfLoss } = parsePerilRow(row);
+          const { title } = parsePerilRow(row);
           if (isEmptyOrHeaderRow(title)) {
             continue;
           }
           candidateTitles.add(title);
           candidateSlugs.add(slugify(title));
-          natureOfLoss.forEach((n) => candidateNatureOfLossNames.add(n));
         }
       }
-
-      const existingNatureOfLosses = candidateNatureOfLossNames.size
-        ? await this.prisma.natureOfLoss.findMany({
-            where: { name: { in: Array.from(candidateNatureOfLossNames) } },
-            select: { id: true, name: true },
-          })
-        : [];
-      const natureOfLossByName = new Map(
-        existingNatureOfLosses.map((n) => [n.name, n]),
-      );
 
       const existingPerils = candidateTitles.size
         ? await this.prisma.peril.findMany({
@@ -140,10 +128,6 @@ export class PerilLikelihoodService {
                 { slug: { in: Array.from(candidateSlugs) } },
                 { name: { in: Array.from(candidateTitles) } },
               ],
-            },
-            include: {
-              control: { select: { question: true, source: true } },
-              natureOfLosses: { select: { name: true } },
             },
           })
         : [];
@@ -236,16 +220,6 @@ export class PerilLikelihoodService {
               ? PreviewStatus.NEED_REVIEW
               : PreviewStatus.READY;
 
-          const matchedNatureOfLoss: string[] = [];
-          const unmatchedNatureOfLoss: string[] = [];
-          for (const name of parsedRow.natureOfLoss) {
-            if (natureOfLossByName.has(name)) {
-              matchedNatureOfLoss.push(name);
-            } else {
-              unmatchedNatureOfLoss.push(name);
-            }
-          }
-
           const hasExistingMonthData =
             !!existingPeril && perilIdsWithMonthData.has(existingPeril.id);
 
@@ -262,9 +236,6 @@ export class PerilLikelihoodService {
               us: validationResult.us,
               uk: validationResult.uk,
               impact: validationResult.impact,
-              description: validationResult.description,
-              control: validationResult.control,
-              natureOfLoss: matchedNatureOfLoss,
             },
           );
 
@@ -275,10 +246,6 @@ export class PerilLikelihoodService {
                   `${parsedRow.title} already has data for ${monthAsString} ${year} - importing will overwrite the existing values`,
                 ]
               : []),
-            ...unmatchedNatureOfLoss.map(
-              (name) =>
-                `Nature of loss '${name}' for '${parsedRow.title}' does not match any existing record - it will be skipped`,
-            ),
           ];
 
           previewItems.push({
@@ -291,10 +258,7 @@ export class PerilLikelihoodService {
               uk: validationResult.uk,
               isNewPeril,
               hasExistingMonthData,
-              description: validationResult.description,
               impact: validationResult.impact ?? null,
-              natureOfLoss: matchedNatureOfLoss,
-              control: validationResult.control ?? null,
               changeType,
               changes,
             },
@@ -425,7 +389,9 @@ export class PerilLikelihoodService {
       data: Array.from(uniqueNewPerils.values()).map((item) => ({
         name: item.rowData.perilName,
         slug: item.rowData.perilSlug,
-        description: item.rowData.description || '',
+        // Peril.description is required by the schema but isn't importable
+        // from the sheet - new perils start blank and get one via the admin UI.
+        description: '',
         impact: item.rowData.impact ?? undefined,
         region: [],
         createdAt,
@@ -521,52 +487,6 @@ export class PerilLikelihoodService {
             itemsToImport,
             createdAt,
           );
-
-          const namesInImport = new Set<string>();
-          for (const item of itemsToImport) {
-            item.rowData.natureOfLoss.forEach((n) => namesInImport.add(n));
-          }
-          if (namesInImport.size) {
-            const natureOfLosses = await tx.natureOfLoss.findMany({
-              where: { name: { in: Array.from(namesInImport) } },
-              select: { id: true, name: true },
-            });
-            const natureOfLossIdByName = new Map(
-              natureOfLosses.map((n) => [n.name, n.id]),
-            );
-
-            const perilIdsByNatureOfLossId = new Map<string, Set<string>>();
-            for (const item of itemsToImport) {
-              const perilId = perilIdByItem.get(item);
-              if (!perilId) {
-                continue;
-              }
-              for (const name of item.rowData.natureOfLoss) {
-                const natureOfLossId = natureOfLossIdByName.get(name);
-                if (!natureOfLossId) {
-                  continue;
-                }
-                const set =
-                  perilIdsByNatureOfLossId.get(natureOfLossId) ?? new Set();
-                set.add(perilId);
-                perilIdsByNatureOfLossId.set(natureOfLossId, set);
-              }
-            }
-
-            for (const [
-              natureOfLossId,
-              perilIds,
-            ] of perilIdsByNatureOfLossId.entries()) {
-              await tx.natureOfLoss.update({
-                where: { id: natureOfLossId },
-                data: {
-                  perils: {
-                    connect: Array.from(perilIds).map((id) => ({ id })),
-                  },
-                },
-              });
-            }
-          }
 
           const latestByPerilId = new Map<
             string,
@@ -677,44 +597,16 @@ export class PerilLikelihoodService {
             });
           }
 
+          // A BLANK IMPACT CELL MEANS "NOT PROVIDED" - DON'T OVERWRITE THE
+          // PERIL'S CURRENT IMPACT. THIS RUNS ON EVERY IMPORT (NOT JUST WHEN
+          // THE IMPACT CHANGES) SO A RE-UPLOADED ROLLED-FORWARD SHEET PERSISTS
+          // ITS EDITS. DESCRIPTION / CONTROL / NATURE OF LOSS ARE NOT IMPORTABLE.
           for (const { item, perilId } of entries) {
-            // EMPTY STRING MEANS "COLUMN LEFT BLANK" - NOT PROVIDED, SO DON'T
-            // OVERWRITE THE EXISTING VALUE. UNLIKE THE OLD BEHAVIOUR, THIS RUNS
-            // ON EVERY IMPORT (NOT JUST WHEN IMPACT CHANGES) SO THAT RE-UPLOADING
-            // A ROLLED-FORWARD SHEET WITH EDITED DESCRIPTION/IMPACT ACTUALLY
-            // PERSISTS THOSE EDITS.
-            const descriptionUpdate = item.rowData.description || undefined;
             const impactUpdate = item.rowData.impact ?? undefined;
-
-            if (descriptionUpdate !== undefined || impactUpdate !== undefined) {
+            if (impactUpdate !== undefined) {
               await tx.peril.update({
-                where: {
-                  id: perilId,
-                },
-                data: {
-                  ...(impactUpdate !== undefined
-                    ? { impact: impactUpdate }
-                    : {}),
-                  ...(descriptionUpdate !== undefined
-                    ? { description: descriptionUpdate }
-                    : {}),
-                },
-              });
-            }
-
-            const control = item.rowData.control;
-            if (control && (control.question || control.source)) {
-              await tx.control.upsert({
-                where: { perilId },
-                create: {
-                  perilId,
-                  question: control.question ?? '',
-                  source: control.source ?? '',
-                },
-                update: {
-                  ...(control.question ? { question: control.question } : {}),
-                  ...(control.source ? { source: control.source } : {}),
-                },
+                where: { id: perilId },
+                data: { impact: impactUpdate },
               });
             }
           }
@@ -854,8 +746,9 @@ export class PerilLikelihoodService {
   /**
    * Export a given month's peril data (one sheet per risk category, matching
    * the same layout the import expects) so an admin can roll it forward: edit
-   * the EU/US/UK/Impact/Description/Control values for the new month and
-   * re-upload the same file via /validate + /import. EU/US/UK column headers
+   * the Impact and EU/US/UK values for the new month and re-upload the same
+   * file via /validate + /import. Only Title, Impact and the EU/US/UK regions
+   * are exported/importable - nothing else is editable this way. EU/US/UK column headers
    * are left generic (not month-suffixed) so the file re-imports cleanly
    * regardless of which month it's later uploaded against.
    */
@@ -871,9 +764,6 @@ export class PerilLikelihoodService {
           where: { deletedAt: null },
           select: {
             name: true,
-            description: true,
-            control: { select: { question: true, source: true } },
-            natureOfLosses: { select: { name: true } },
             likelihoods: {
               where: { createdAt },
               select: { eu: true, us: true, uk: true, impact: true },
@@ -886,17 +776,7 @@ export class PerilLikelihoodService {
     });
 
     const perilsBySlug = new Map(riskCategories.map((rc) => [rc.slug, rc]));
-    const header = [
-      'Title',
-      'Description',
-      'Nature of loss',
-      'Control',
-      'Source of Controls',
-      'Impact of Peril',
-      'EU',
-      'US',
-      'UK',
-    ];
+    const header = ['Title', 'Impact of Peril', 'EU', 'US', 'UK'];
 
     const workbook = XLSX.utils.book_new();
     for (const slug of slugs) {
@@ -911,10 +791,6 @@ export class PerilLikelihoodService {
 
         rows.push([
           peril.name,
-          peril.description ?? '',
-          peril.natureOfLosses.map((n) => n.name).join(', '),
-          peril.control?.question ?? '',
-          peril.control?.source ?? '',
           likelihood.impact,
           likelihood.eu,
           likelihood.us,

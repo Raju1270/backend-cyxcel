@@ -21,20 +21,13 @@ type Peril = {
   slug: string;
 };
 
-export interface ControlValue {
-  question?: string;
-  source?: string;
-}
-
 export interface ValidationResult {
   warnings: string[];
   peril: Peril | null;
   eu: Likelihood;
   us: Likelihood;
   uk: Likelihood;
-  description: string;
   impact?: Impact;
-  control?: ControlValue;
 }
 
 /**
@@ -107,52 +100,13 @@ function parseLikelihoodValues(
 }
 
 /**
- * Parse description and impact for a row - used when the peril doesn't exist
- * yet and needs to be created. Columns are optional; description defaults to
- * an empty string and impact is left undefined when not present/parseable.
+ * Parse the optional "Impact of Peril" / "Impact" column. Left undefined when
+ * blank or unparseable so a blank cell never overwrites the saved impact.
  */
-function parseDescriptionAndImpact(row: LatestPerilLikelihoodRow): {
-  description: string;
-  impact?: Impact;
-} {
-  const descriptionValue = getColumnValue(row, 'Description');
-  const description =
-    typeof descriptionValue === 'string'
-      ? descriptionValue.trim()
-      : typeof descriptionValue === 'number'
-        ? String(descriptionValue)
-        : '';
-
+function parseImpactValue(row: LatestPerilLikelihoodRow): Impact | undefined {
   const impactValue =
     getColumnValue(row, 'Impact of Peril') ?? getColumnValue(row, 'Impact');
-  const impact = parseImpact(impactValue);
-
-  return { description, impact };
-}
-
-/**
- * Parse the "Control" / "Source of Controls" columns for a row. Both are
- * optional and free text; undefined is returned for a field left blank so
- * callers can tell "not provided" apart from "explicitly cleared".
- */
-function parseControlValue(row: LatestPerilLikelihoodRow): ControlValue {
-  const toText = (value: unknown): string | undefined => {
-    if (typeof value === 'string' && value.trim() !== '') {
-      return value.trim();
-    }
-    if (typeof value === 'number') {
-      return String(value);
-    }
-    return undefined;
-  };
-
-  return {
-    question: toText(getColumnValue(row, 'Control')),
-    source: toText(
-      getColumnValue(row, 'Source of Controls') ??
-        getColumnValue(row, 'Source of Control'),
-    ),
-  };
+  return parseImpact(impactValue);
 }
 
 /**
@@ -190,18 +144,12 @@ export function validatePerilRow(
     ukColumn,
   );
 
-  // Parse description/impact - only used when the peril needs to be created
-  const { description, impact } = parseDescriptionAndImpact(row);
-  const control = parseControlValue(row);
-
   return {
     warnings,
     peril,
     eu: likelihoodValues.eu,
     us: likelihoodValues.us,
     uk: likelihoodValues.uk,
-    description,
-    impact,
-    control,
+    impact: parseImpactValue(row),
   };
 }

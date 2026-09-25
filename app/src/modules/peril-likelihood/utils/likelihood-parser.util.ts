@@ -15,7 +15,10 @@ export function parseLikelihood(value: unknown): Likelihood | undefined {
     if (value === 5 || value === 5.0) return Likelihood.HIGHLY_LIKELY;
   }
 
-  const raw = String(value).trim().toLowerCase();
+  // Reason: /export writes the raw enum names (e.g. HIGHLY_LIKELY), so treat
+  // "_" and "-" like the spaces in "Highly Likely" - otherwise the substring
+  // checks below miss "highly" and silently downgrade it to plain LIKELY.
+  const raw = String(value).trim().toLowerCase().replace(/[_-]+/g, ' ');
 
   // Handle empty string after conversion
   if (raw === '') return undefined;

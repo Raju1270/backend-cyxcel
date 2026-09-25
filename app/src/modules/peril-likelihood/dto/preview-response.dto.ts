@@ -4,14 +4,6 @@ import { Impact } from '../utils/impact.enum';
 import { TotalsDto, WarningsDto } from '../../../common/dto/import-common.dto';
 import { ImportPreviewResponseDto } from '../../../common/dto/import-preview-response.dto';
 
-export class PerilControlDto {
-  @ApiProperty({ required: false })
-  question?: string;
-
-  @ApiProperty({ required: false })
-  source?: string;
-}
-
 export class PerilFieldChangeDto {
   @ApiProperty({
     description: 'Name of the field that changed',
@@ -68,12 +60,6 @@ export class PerilLikelihoodRowData {
   hasExistingMonthData: boolean;
 
   @ApiProperty({
-    description:
-      'Peril description read from the "Description" column - only used when creating a new peril',
-  })
-  description: string;
-
-  @ApiProperty({
     enum: Impact,
     required: false,
     nullable: true,
@@ -83,25 +69,9 @@ export class PerilLikelihoodRowData {
   impact?: Impact | null;
 
   @ApiProperty({
-    type: [String],
-    description:
-      'Nature of loss names read from the "Nature of loss" column that matched an existing NatureOfLoss record by name - these get connected to the peril on import. Names in the sheet that did not match any existing record are dropped here and surfaced as a warning instead.',
-  })
-  natureOfLoss: string[];
-
-  @ApiProperty({
-    type: PerilControlDto,
-    required: false,
-    nullable: true,
-    description:
-      'Control question/source read from the "Control" / "Source of Controls" columns. When either is present, the peril\'s Control record is created or updated on import; fields left blank are not overwritten.',
-  })
-  control?: PerilControlDto | null;
-
-  @ApiProperty({
     enum: ['NEW', 'UPDATED', 'UNCHANGED'],
     description:
-      "NEW: this peril doesn't exist yet and will be created. UPDATED: the peril exists and at least one field (eu/us/uk/impact vs its current or most recent prior month, or description/control/nature of loss vs its current values) differs from this row. UNCHANGED: the peril exists and every field in this row matches what's already saved.",
+      "NEW: this peril doesn't exist yet and will be created. UPDATED: the peril exists and its eu/us/uk/impact differ from its current (or most recent prior) month's saved values. UNCHANGED: the peril exists and every importable field in this row matches what's already saved.",
   })
   changeType: 'NEW' | 'UPDATED' | 'UNCHANGED';
 
@@ -127,7 +97,7 @@ export class PerilLikelihoodTotalsDto extends TotalsDto {
 
   @ApiProperty({
     description:
-      "Rows for an existing peril where at least one field actually differs from what's currently saved",
+      "Rows for an existing peril where impact or an EU/US/UK likelihood actually differs from what's currently saved",
   })
   updatedPerils: number;
 
