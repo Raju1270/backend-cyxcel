@@ -6,6 +6,7 @@ import {
   anyColumnExists,
   getColumnValue,
   getFirstColumnValue,
+  getRegionColumnCandidates,
 } from '../utils/row-parser.util';
 
 type LatestPerilLikelihoodRow = {
@@ -27,6 +28,7 @@ export interface ValidationResult {
   eu: Likelihood;
   us: Likelihood;
   uk: Likelihood;
+  description: string;
   impact?: Impact;
 }
 
@@ -42,9 +44,9 @@ function checkMissingColumns(
   excelRowNumber: number,
 ): string[] {
   const warnings: string[] = [];
-  const euCandidates = [euColumn, 'EU LIKELIHOOD', 'EU'];
-  const usCandidates = [usColumn, 'US LIKELIHOOD', 'US'];
-  const ukCandidates = [ukColumn, 'UK LIKELIHOOD', 'UK'];
+  const euCandidates = getRegionColumnCandidates(row, 'EU', euColumn);
+  const usCandidates = getRegionColumnCandidates(row, 'US', usColumn);
+  const ukCandidates = getRegionColumnCandidates(row, 'UK', ukColumn);
 
   if (!anyColumnExists(row, euCandidates)) {
     warnings.push(
@@ -78,9 +80,9 @@ function parseLikelihoodValues(
   us: Likelihood;
   uk: Likelihood;
 } {
-  const euCandidates = [euColumn, 'EU LIKELIHOOD', 'EU'];
-  const usCandidates = [usColumn, 'US LIKELIHOOD', 'US'];
-  const ukCandidates = [ukColumn, 'UK LIKELIHOOD', 'UK'];
+  const euCandidates = getRegionColumnCandidates(row, 'EU', euColumn);
+  const usCandidates = getRegionColumnCandidates(row, 'US', usColumn);
+  const ukCandidates = getRegionColumnCandidates(row, 'UK', ukColumn);
 
   const euValue =
     parseLikelihood(getFirstColumnValue(row, euCandidates)) ??
@@ -97,6 +99,21 @@ function parseLikelihoodValues(
     us: usValue,
     uk: ukValue,
   };
+}
+
+/**
+ * Parse the optional "Description" column. An empty string means the cell was
+ * blank / missing - callers treat that as "not provided", never as "clear it".
+ */
+function parseDescriptionValue(row: LatestPerilLikelihoodRow): string {
+  const value = getColumnValue(row, 'Description');
+  if (typeof value === 'string') {
+    return value.trim();
+  }
+  if (typeof value === 'number') {
+    return String(value);
+  }
+  return '';
 }
 
 /**
@@ -150,6 +167,7 @@ export function validatePerilRow(
     eu: likelihoodValues.eu,
     us: likelihoodValues.us,
     uk: likelihoodValues.uk,
+    description: parseDescriptionValue(row),
     impact: parseImpactValue(row),
   };
 }

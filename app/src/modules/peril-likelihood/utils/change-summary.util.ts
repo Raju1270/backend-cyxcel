@@ -10,6 +10,7 @@ export interface PerilChangeSummary {
 }
 
 export interface ExistingPerilForDiff {
+  description: string;
   impact: string | null;
 }
 
@@ -28,10 +29,11 @@ const NO_VALUE = '(none)';
  * previous month, edit, re-upload" workflow is to only touch what's actually
  * different, and this makes that visible before import.
  *
- * Only impact and the EU/US/UK likelihoods are importable, and all four are
- * versioned per month, so they're compared against `likelihoodBaseline` (the
- * target month's own row if it already exists, otherwise the most recent
- * prior month's row).
+ * Impact and the EU/US/UK likelihoods are versioned per month, so they're
+ * compared against `likelihoodBaseline` (the target month's own row if it
+ * already exists, otherwise the most recent prior month's row). Description
+ * isn't month-versioned, so it's compared against the peril's current saved
+ * text - and only when the row actually provides one (blank = not provided).
  */
 export function computePerilChangeSummary(
   existingPeril: ExistingPerilForDiff | null,
@@ -41,6 +43,7 @@ export function computePerilChangeSummary(
     us: string;
     uk: string;
     impact?: string;
+    description?: string;
   },
 ): PerilChangeSummary {
   if (!existingPeril) {
@@ -82,6 +85,17 @@ export function computePerilChangeSummary(
         field: 'Impact',
         from: baselineImpact ?? NO_VALUE,
         to: incoming.impact,
+      });
+    }
+  }
+
+  if (incoming.description) {
+    const baselineDescription = existingPeril.description || null;
+    if (baselineDescription !== incoming.description) {
+      changes.push({
+        field: 'Description',
+        from: baselineDescription ?? NO_VALUE,
+        to: incoming.description,
       });
     }
   }

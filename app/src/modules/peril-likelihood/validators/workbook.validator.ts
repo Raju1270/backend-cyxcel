@@ -1,6 +1,10 @@
 import { BadRequestException } from '@nestjs/common';
 import { RiskCategorySlugs } from '../../../common/utils/risk-category-slugs.enum';
-import { anyColumnExists } from '../utils/row-parser.util';
+import {
+  anyColumnExists,
+  findMonthFallbackColumn,
+  getRegionColumnCandidates,
+} from '../utils/row-parser.util';
 
 type LatestPerilLikelihoodRow = {
   Title: string;
@@ -78,26 +82,33 @@ export function validateRequiredColumnsForSheet(
   ukColumn: string,
 ): string[] {
   const warnings: string[] = [];
-  const euCandidates = [euColumn, 'EU LIKELIHOOD', 'EU'];
-  const usCandidates = [usColumn, 'US LIKELIHOOD', 'US'];
-  const ukCandidates = [ukColumn, 'UK LIKELIHOOD', 'UK'];
 
   if (rows.length === 0) return warnings;
 
-  if (!anyColumnExists(rows[0], euCandidates)) {
-    warnings.push(
-      `Required column '${euColumn}' not found in sheet '${sheetName}'`,
-    );
-  }
-  if (!anyColumnExists(rows[0], usCandidates)) {
-    warnings.push(
-      `Required column '${usColumn}' not found in sheet '${sheetName}'`,
-    );
-  }
-  if (!anyColumnExists(rows[0], ukCandidates)) {
-    warnings.push(
-      `Required column '${ukColumn}' not found in sheet '${sheetName}'`,
-    );
+  const firstRow = rows[0];
+  const regions = [
+    { region: 'EU', column: euColumn },
+    { region: 'US', column: usColumn },
+    { region: 'UK', column: ukColumn },
+  ] as const;
+
+  for (const { region, column } of regions) {
+    const candidates = getRegionColumnCandidates(firstRow, region, column);
+    if (!anyColumnExists(firstRow, candidates)) {
+      warnings.push(
+        `Required column '${column}' not found in sheet '${sheetName}'`,
+      );
+      continue;
+    }
+
+    // Only another month's column was found (e.g. a July export uploaded for
+    // August) - it IS read, but say so instead of doing it silently.
+    const fallback = findMonthFallbackColumn(firstRow, region, column);
+    if (fallback) {
+      warnings.push(
+        `Column '${column}' not found in sheet '${sheetName}' - using '${fallback}' instead`,
+      );
+    }
   }
 
   return warnings;

@@ -25,6 +25,7 @@ import {
 import { validatePerilRow } from './validators/peril-row.validator';
 import { isEmptyOrHeaderRow, parsePerilRow } from './utils/row-parser.util';
 import { computePerilChangeSummary } from './utils/change-summary.util';
+import { Impact } from './utils/impact.enum';
 
 type LatestPerilLikelihoodRow = {
   Title: string;
@@ -236,6 +237,7 @@ export class PerilLikelihoodService {
               us: validationResult.us,
               uk: validationResult.uk,
               impact: validationResult.impact,
+              description: validationResult.description,
             },
           );
 
@@ -258,6 +260,7 @@ export class PerilLikelihoodService {
               uk: validationResult.uk,
               isNewPeril,
               hasExistingMonthData,
+              description: validationResult.description,
               impact: validationResult.impact ?? null,
               changeType,
               changes,
@@ -389,9 +392,9 @@ export class PerilLikelihoodService {
       data: Array.from(uniqueNewPerils.values()).map((item) => ({
         name: item.rowData.perilName,
         slug: item.rowData.perilSlug,
-        // Peril.description is required by the schema but isn't importable
-        // from the sheet - new perils start blank and get one via the admin UI.
-        description: '',
+        // Peril.description is required by the schema - a blank cell creates
+        // the peril with an empty description.
+        description: item.rowData.description || '',
         impact: item.rowData.impact ?? undefined,
         region: [],
         createdAt,
@@ -478,7 +481,9 @@ export class PerilLikelihoodService {
 
       let importedCount = 0;
       let duplicateRowsMerged = 0;
+      let toCreateCount = 0;
       let toUpdateCount = 0;
+      let unchangedCount = 0;
 
       await this.prisma.$transaction(
         async (tx) => {
@@ -558,6 +563,7 @@ export class PerilLikelihoodService {
                 select: {
                   id: true,
                   impact: true,
+                  description: true,
                 },
               })
             : [];
@@ -566,6 +572,9 @@ export class PerilLikelihoodService {
             string,
             (typeof existingPerils)[number]['impact']
           >(existingPerils.map((peril) => [peril.id, peril.impact]));
+          const descriptionByPerilId = new Map(
+            existingPerils.map((peril) => [peril.id, peril.description]),
+          );
 
           // HISTORY ONLY ON FIRST IMPORT OF THE MONTH FOR A PERIL - RE-IMPORTS SKIP TO AVOID DUPLICATE SNAPSHOTS.
           const historyData = entries
@@ -598,15 +607,43 @@ export class PerilLikelihoodService {
           }
 
           // A BLANK IMPACT CELL MEANS "NOT PROVIDED" - DON'T OVERWRITE THE
-          // PERIL'S CURRENT IMPACT. THIS RUNS ON EVERY IMPORT (NOT JUST WHEN
-          // THE IMPACT CHANGES) SO A RE-UPLOADED ROLLED-FORWARD SHEET PERSISTS
-          // ITS EDITS. DESCRIPTION / CONTROL / NATURE OF LOSS ARE NOT IMPORTABLE.
+          // PERIL'S CURRENT IMPACT. ONLY PERILS WHOSE IMPACT ACTUALLY DIFFERS
+          // ARE WRITTEN, AND THEY'RE BATCHED PER IMPACT VALUE (AT MOST 5
+          // QUERIES) - A ROW-BY-ROW UPDATE LOOP INSIDE THIS TRANSACTION WAS SLOW
+          // ENOUGH ON A FULL-MONTH FILE TO BLOW THE TRANSACTION TIMEOUT.
+          // DESCRIPTION / CONTROL / NATURE OF LOSS ARE NOT IMPORTABLE.
+          const perilIdsByNewImpact = new Map<Impact, string[]>();
           for (const { item, perilId } of entries) {
-            const impactUpdate = item.rowData.impact ?? undefined;
-            if (impactUpdate !== undefined) {
+            const impact = item.rowData.impact;
+            const incomingImpact: string | null | undefined = impact;
+            const currentImpact: string | null | undefined =
+              impactByPerilId.get(perilId);
+            if (impact && incomingImpact !== currentImpact) {
+              const ids = perilIdsByNewImpact.get(impact) ?? [];
+              ids.push(perilId);
+              perilIdsByNewImpact.set(impact, ids);
+            }
+          }
+          for (const [impact, ids] of perilIdsByNewImpact.entries()) {
+            await tx.peril.updateMany({
+              where: { id: { in: ids } },
+              data: { impact },
+            });
+          }
+
+          // A BLANK DESCRIPTION CELL MEANS "NOT PROVIDED" (NEVER CLEARS THE
+          // SAVED ONE). EACH DESCRIPTION IS DIFFERENT TEXT SO THESE CAN'T BE
+          // GROUPED LIKE IMPACT - BUT ONLY PERILS WHOSE TEXT ACTUALLY CHANGED
+          // ARE WRITTEN, SO AN UNEDITED SHEET COSTS NOTHING HERE.
+          for (const { item, perilId } of entries) {
+            const description = item.rowData.description;
+            if (
+              description &&
+              description !== descriptionByPerilId.get(perilId)
+            ) {
               await tx.peril.update({
                 where: { id: perilId },
-                data: { impact: impactUpdate },
+                data: { description },
               });
             }
           }
@@ -619,7 +656,35 @@ export class PerilLikelihoodService {
             existingCurrentMonthByPerilId.has(perilId),
           );
 
-          toUpdateCount = toUpdateEntries.length;
+          // A ROW THAT ALREADY MATCHES THIS MONTH'S SAVED ROW IS A NO-OP (E.G.
+          // RE-UPLOADING AN UNEDITED EXPORT OF THE SAME MONTH) - SKIP IT.
+          const changedUpdateEntries = toUpdateEntries.filter(
+            ({ item, perilId }) => {
+              const existing = existingCurrentMonthByPerilId.get(perilId);
+              if (!existing) {
+                return false;
+              }
+              const existingEu: string = existing.eu;
+              const existingUs: string = existing.us;
+              const existingUk: string = existing.uk;
+              const existingImpact: string = existing.impact;
+              const incomingEu: string = item.rowData.eu;
+              const incomingUs: string = item.rowData.us;
+              const incomingUk: string = item.rowData.uk;
+              const incomingImpact: string | null | undefined =
+                item.rowData.impact;
+              return (
+                existingEu !== incomingEu ||
+                existingUs !== incomingUs ||
+                existingUk !== incomingUk ||
+                (!!incomingImpact && existingImpact !== incomingImpact)
+              );
+            },
+          );
+
+          toCreateCount = toCreateEntries.length;
+          toUpdateCount = changedUpdateEntries.length;
+          unchangedCount = toUpdateEntries.length - changedUpdateEntries.length;
 
           if (toCreateEntries.length) {
             await tx.perilLikelihood.createMany({
@@ -642,28 +707,45 @@ export class PerilLikelihoodService {
             });
           }
 
-          for (const { item, perilId } of toUpdateEntries) {
-            await tx.perilLikelihood.update({
-              where: {
-                perilId_createdAt: {
-                  perilId,
-                  createdAt,
-                },
-              },
+          // BATCHED: PERILS THAT END UP WITH THE SAME eu/us/uk/impact SHARE ONE
+          // updateMany INSTEAD OF ONE update EACH.
+          const updateGroups = new Map<
+            string,
+            {
+              data: Prisma.PerilLikelihoodUpdateManyMutationInput;
+              perilIds: string[];
+            }
+          >();
+          for (const { item, perilId } of changedUpdateEntries) {
+            // A RE-IMPORT OF THE SAME MONTH THAT DOESN'T CARRY AN IMPACT
+            // VALUE SHOULD LEAVE THIS ROW'S OWN SEVERITY UNTOUCHED, NOT
+            // SILENTLY OVERWRITE IT WITH WHATEVER THE PERIL'S CURRENT
+            // (POSSIBLY LATER-MONTH) SEVERITY HAPPENS TO BE.
+            const impact =
+              item.rowData.impact ??
+              existingCurrentMonthByPerilId.get(perilId)?.impact ??
+              impactByPerilId.get(perilId) ??
+              'MODERATE';
+            const key = `${item.rowData.eu}|${item.rowData.us}|${item.rowData.uk}|${impact}`;
+            const group = updateGroups.get(key) ?? {
               data: {
-                // A RE-IMPORT OF THE SAME MONTH THAT DOESN'T CARRY AN IMPACT
-                // VALUE SHOULD LEAVE THIS ROW'S OWN SEVERITY UNTOUCHED, NOT
-                // SILENTLY OVERWRITE IT WITH WHATEVER THE PERIL'S CURRENT
-                // (POSSIBLY LATER-MONTH) SEVERITY HAPPENS TO BE.
-                impact:
-                  item.rowData.impact ??
-                  existingCurrentMonthByPerilId.get(perilId)?.impact ??
-                  impactByPerilId.get(perilId) ??
-                  'MODERATE',
+                impact,
                 eu: item.rowData.eu,
                 us: item.rowData.us,
                 uk: item.rowData.uk,
               },
+              perilIds: [],
+            };
+            group.perilIds.push(perilId);
+            updateGroups.set(key, group);
+          }
+          for (const {
+            data,
+            perilIds: groupPerilIds,
+          } of updateGroups.values()) {
+            await tx.perilLikelihood.updateMany({
+              where: { perilId: { in: groupPerilIds }, createdAt },
+              data,
             });
           }
 
@@ -673,7 +755,7 @@ export class PerilLikelihoodService {
       );
 
       console.log(
-        `${preview.monthAsString} likelihoods: batch-wrote ${importedCount - toUpdateCount} new and ${toUpdateCount} updated PerilLikelihood record(s)`,
+        `${preview.monthAsString} likelihoods: batch-wrote ${toCreateCount} new and ${toUpdateCount} updated PerilLikelihood record(s), skipped ${unchangedCount} unchanged`,
       );
 
       const actualCount = await this.prisma.perilLikelihood.count({
@@ -746,14 +828,18 @@ export class PerilLikelihoodService {
   /**
    * Export a given month's peril data (one sheet per risk category, matching
    * the same layout the import expects) so an admin can roll it forward: edit
-   * the Impact and EU/US/UK values for the new month and re-upload the same
-   * file via /validate + /import. Only Title, Impact and the EU/US/UK regions
-   * are exported/importable - nothing else is editable this way. EU/US/UK column headers
-   * are left generic (not month-suffixed) so the file re-imports cleanly
-   * regardless of which month it's later uploaded against.
+   * the Description, Impact and EU/US/UK values for the new month and re-upload
+   * the same file via /validate + /import. Only Title, Description, Impact and
+   * the EU/US/UK regions are exported/importable - nothing else is editable this
+   * way. The region headers carry the exported month (e.g. "EU JULY 2026"); the
+   * import reads another month's columns when the target month's aren't there,
+   * so the file can be uploaded for a different month without renaming them.
    */
   async exportMonthData(month: string, year: string): Promise<Buffer> {
     const createdAt = new Date(`${year}-${month}-02`);
+    const monthName = createdAt
+      .toLocaleString('default', { month: 'long' })
+      .toUpperCase();
     const slugs = getAllowedSheets();
 
     const riskCategories = await this.prisma.riskCategory.findMany({
@@ -764,6 +850,7 @@ export class PerilLikelihoodService {
           where: { deletedAt: null },
           select: {
             name: true,
+            description: true,
             likelihoods: {
               where: { createdAt },
               select: { eu: true, us: true, uk: true, impact: true },
@@ -776,7 +863,14 @@ export class PerilLikelihoodService {
     });
 
     const perilsBySlug = new Map(riskCategories.map((rc) => [rc.slug, rc]));
-    const header = ['Title', 'Impact of Peril', 'EU', 'US', 'UK'];
+    const header = [
+      'Title',
+      'Description',
+      'Impact of Peril',
+      `EU ${monthName} ${year}`,
+      `US ${monthName} ${year}`,
+      `UK ${monthName} ${year}`,
+    ];
 
     const workbook = XLSX.utils.book_new();
     for (const slug of slugs) {
@@ -791,6 +885,7 @@ export class PerilLikelihoodService {
 
         rows.push([
           peril.name,
+          peril.description ?? '',
           likelihood.impact,
           likelihood.eu,
           likelihood.us,

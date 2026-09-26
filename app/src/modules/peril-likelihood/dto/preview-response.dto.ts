@@ -60,6 +60,12 @@ export class PerilLikelihoodRowData {
   hasExistingMonthData: boolean;
 
   @ApiProperty({
+    description:
+      'Peril description read from the "Description" column. Blank means "not provided" and never clears the saved description; when filled it is applied to the peril on import (new or existing).',
+  })
+  description: string;
+
+  @ApiProperty({
     enum: Impact,
     required: false,
     nullable: true,
@@ -71,7 +77,7 @@ export class PerilLikelihoodRowData {
   @ApiProperty({
     enum: ['NEW', 'UPDATED', 'UNCHANGED'],
     description:
-      "NEW: this peril doesn't exist yet and will be created. UPDATED: the peril exists and its eu/us/uk/impact differ from its current (or most recent prior) month's saved values. UNCHANGED: the peril exists and every importable field in this row matches what's already saved.",
+      "NEW: this peril doesn't exist yet and will be created. UPDATED: the peril exists and its eu/us/uk/impact differ from its current (or most recent prior) month's saved values, or its description differs from the saved one. UNCHANGED: the peril exists and every importable field in this row matches what's already saved.",
   })
   changeType: 'NEW' | 'UPDATED' | 'UNCHANGED';
 
@@ -97,7 +103,7 @@ export class PerilLikelihoodTotalsDto extends TotalsDto {
 
   @ApiProperty({
     description:
-      "Rows for an existing peril where impact or an EU/US/UK likelihood actually differs from what's currently saved",
+      "Rows for an existing peril where impact, an EU/US/UK likelihood or the description actually differs from what's currently saved",
   })
   updatedPerils: number;
 
