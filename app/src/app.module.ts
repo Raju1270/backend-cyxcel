@@ -12,6 +12,7 @@ import { RiskOwnersModule } from './modules/risk-owners/risk-owners.module';
 import { ImportLogModule } from './modules/import-log/import-log.module';
 import { QuestionsModule } from './modules/questions/questions.module';
 import { ThoughtLeadershipModule } from './modules/thought-leadership/thought-leadership.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 import { PerilsModule } from './modules/perils/perils.module';
 import { PostmanModule } from './modules/postman/postman.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -49,6 +50,7 @@ const isProduction = nodeEnv === 'production';
     ImportLogModule,
     QuestionsModule,
     ThoughtLeadershipModule,
+    NotificationsModule,
     PerilsModule,
     // Postman module is only available in non-production environments
     ...(isProduction ? [] : [PostmanModule]),

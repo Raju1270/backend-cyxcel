@@ -68,4 +68,8 @@ export const validationSchema = Joi.object({
     then: Joi.string().required(),
     otherwise: Joi.string().allow('').default(''),
   }),
+
+  // Vercel Blob (notification PDFs). Optional so the API still boots without it;
+  // the notification endpoints answer 503 until it is set.
+  BLOB_READ_WRITE_TOKEN: Joi.string().allow('').optional(),
 });

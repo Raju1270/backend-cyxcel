@@ -53,6 +53,7 @@ model Control {
   subPartsStyle ControlSubPartsStyle @default(LETTERED)
   createdAt     DateTime             @default(now())
   updatedAt     DateTime             @updatedAt
+  deletedAt     DateTime?
 
   perilId String @unique
   peril   Peril  @relation(fields: [perilId], references: [id], onDelete: Cascade)
@@ -76,6 +77,7 @@ model PerilHistory {
   likelihoodUpdatedAt DateTime
 
   historyCreatedAt DateTime @default(now())
+  deletedAt        DateTime?
 
   peril Peril @relation(fields: [perilId], references: [id], onDelete: Cascade)
 
@@ -93,6 +95,7 @@ model PerilLikelihood {
   uk        Likelihood
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
+  deletedAt DateTime?
   peril     Peril      @relation(fields: [perilId], references: [id], onDelete: Cascade)
 
   @@unique([perilId, createdAt])
@@ -106,6 +109,7 @@ model RiskCategory {
   lossData          Json
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @updatedAt
+  deletedAt         DateTime?
   exposureQuestions ExposureQuestion[]
   questions         Question[]
   reports           Report[]
@@ -124,6 +128,7 @@ model Sector {
   usCISA    Boolean
   createdAt DateTime         @default(now())
   updatedAt DateTime         @updatedAt
+  deletedAt DateTime?
   exposures SectorExposure[]
   perils    Peril[]          @relation("PerilToSector")
 
@@ -137,6 +142,7 @@ model OrganizationSector {
   organizationId String
   sectorId       String
   createdAt      DateTime @default(now())
+  deletedAt      DateTime?
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   sector       Sector       @relation(fields: [sectorId], references: [id], onDelete: Cascade)
@@ -155,6 +161,7 @@ model OrganizationPerilSector {
   perilId        String
   sectorId       String
   createdAt      DateTime @default(now())
+  deletedAt      DateTime?
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   peril        Peril        @relation(fields: [perilId], references: [id], onDelete: Cascade)
@@ -177,6 +184,7 @@ model SectorExposure {
   technologyExposure              Exposure
   createdAt                       DateTime @default(now())
   updatedAt                       DateTime @updatedAt
+  deletedAt                       DateTime?
   sector                          Sector   @relation(fields: [sectorId], references: [id])
 }
 
@@ -188,6 +196,7 @@ model NatureOfLoss {
   primaryOwnerId  String
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
+  deletedAt       DateTime?
   primaryOwner    RiskOwner   @relation("NatureOfLossPrimaryOwner", fields: [primaryOwnerId], references: [id])
   secondaryOwners RiskOwner[] @relation("NatureOfLossSecondaryOwners")
   perils          Peril[]     @relation("NatureOfLossToPeril")
@@ -198,6 +207,7 @@ model RiskOwner {
   name                    String         @unique
   createdAt               DateTime       @default(now())
   updatedAt               DateTime       @updatedAt
+  deletedAt               DateTime?
   primaryNatureOfLosses   NatureOfLoss[] @relation("NatureOfLossPrimaryOwner")
   secondaryNatureOfLosses NatureOfLoss[] @relation("NatureOfLossSecondaryOwners")
 }
@@ -211,6 +221,7 @@ model User {
   settingsId           String                           @unique
   createdAt            DateTime                         @default(now())
   updatedAt            DateTime                         @updatedAt
+  deletedAt            DateTime?
   customRiskCategories CustomRiskCategory[]
   importLogs           ImportLog[]
   memberships          Membership[]
@@ -219,6 +230,7 @@ model User {
   perilRatings         OrganizationPerilRating[]        @relation("OrganizationPerilRatingUpdatedBy")
   perilRatingHistory   OrganizationPerilRatingHistory[] @relation("OrganizationPerilRatingHistoryUpdatedBy")
   perilHistory         PerilHistory[]                   @relation("PerilLikelihoodHistoryUpdatedBy")
+  notificationReads    NotificationRead[]
 }
 
 model UserSettings {
@@ -230,6 +242,7 @@ model UserSettings {
   userId         String?  @unique
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+  deletedAt      DateTime?
   user           User?
 }
 
@@ -275,6 +288,7 @@ model ExposureQuestion {
   riskCategoryId String
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
+  deletedAt      DateTime?
   riskCategory   RiskCategory @relation(fields: [riskCategoryId], references: [id])
 }
 
@@ -285,6 +299,7 @@ model Question {
   number           Int
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
+  deletedAt        DateTime?
   inactive         Boolean      @default(false)
   replacedById     String?
   replacedBy       Question?    @relation("QuestionVersions", fields: [replacedById], references: [id])
@@ -316,6 +331,7 @@ model CustomRiskCategory {
   slug             String        @unique
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
+  deletedAt        DateTime?
   riskCategorySlug String?
   user             User          @relation(fields: [userId], references: [id])
   organization     Organization? @relation(fields: [organizationId], references: [id])
@@ -330,6 +346,7 @@ model ImportLog {
   status    ImportStatus
   createdAt DateTime     @default(now())
   updatedAt DateTime     @updatedAt
+  deletedAt DateTime?
   user      User         @relation(fields: [userId], references: [id])
 }
 
@@ -339,6 +356,7 @@ model Organization {
   regions   Region[] @default([EU, US, UK])
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  deletedAt DateTime?
 
   memberships          Membership[]
   perilRatings         OrganizationPerilRating[]
@@ -355,6 +373,7 @@ model Membership {
   role           OrgRole
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
+  deletedAt      DateTime?
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -381,6 +400,7 @@ model OrganizationPerilRating {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  deletedAt DateTime?
 
   updatedById String?
   updatedBy   User?   @relation("OrganizationPerilRatingUpdatedBy", fields: [updatedById], references: [id])
@@ -417,6 +437,7 @@ model OrganizationPerilRatingHistory {
 
   // WHEN THIS HISTORY ENTRY WAS CREATED.
   historyCreatedAt DateTime @default(now())
+  deletedAt        DateTime?
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   peril        Peril        @relation(fields: [perilId], references: [id], onDelete: Cascade)
@@ -425,6 +446,35 @@ model OrganizationPerilRatingHistory {
   @@index([perilId])
   @@index([historyCreatedAt])
   @@index([organizationId, perilId, historyCreatedAt])
+}
+
+// BROADCAST ANNOUNCEMENT WITH ONE PRIVATE PDF, SHOWN TO EVERY USER. filePath IS A VERCEL BLOB PATHNAME, NEVER A PUBLIC URL.
+model Notification {
+  id          String             @id @default(uuid())
+  title       String
+  description String
+  filePath    String
+  fileName    String
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  deletedAt   DateTime?
+  reads       NotificationRead[]
+
+  @@index([deletedAt, createdAt])
+}
+
+// ONE ROW PER USER WHO OPENED A NOTIFICATION, SO NOTHING IS WRITTEN PER USER WHEN AN ADMIN PUBLISHES.
+model NotificationRead {
+  id             String       @id @default(uuid())
+  notificationId String
+  userId         String
+  readAt         DateTime     @default(now())
+  deletedAt      DateTime?
+  notification   Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, notificationId])
+  @@index([notificationId])
 }
 
 enum Likelihood {
