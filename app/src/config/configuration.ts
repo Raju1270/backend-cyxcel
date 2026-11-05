@@ -52,6 +52,10 @@ export default () => ({
   clerk: {
     secretKey: process.env.CLERK_SECRET_KEY ?? '',
   },
+  blob: {
+    // Vercel Blob (notification PDFs). Empty => notification endpoints answer 503.
+    readWriteToken: process.env.BLOB_READ_WRITE_TOKEN ?? '',
+  },
   cors: {
     origins: process.env.CORS_ORIGINS
       ? process.env.CORS_ORIGINS.split(',')
